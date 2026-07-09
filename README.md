@@ -1,20 +1,24 @@
-# superset-overlay
+# AI Assessment Sandbox — Dashboard
 
-A **configuration-only overlay** on top of Apache Superset, used as the AI
-Assessment Sandbox's dashboard. There is **no Superset source code in this
-repo**. The Superset instance is downloaded automatically as a pinned Docker
-image, and everything here is layered on top of it through Superset's own
-official configuration seams.
+The dashboard for the AI Assessment Sandbox. It's an Apache Superset deployment
+where multi-disciplinary reviewers explore assessment results, comment on them
+and raise review requests, all recorded in a tamper-evident audit trail — branded
+for the AI Factory, with charts you can embed (still interactive) in other apps.
 
-> **The one rule this project holds:** we never modify, patch, or inject into
-> Superset. Not its source, not its Docker image contents, not its rendered
-> HTML/DOM. If a new Superset release ships, upgrading is a one-line image-tag
-> bump and nothing in this repo can silently break, because nothing here depends
-> on Superset's internals.
+It runs **stock Apache Superset, customized entirely through configuration**. A
+pinned Superset image is pulled automatically, and everything in this repo layers
+on top of it through Superset's own official configuration seams. Because no
+Superset source is forked or patched, upgrading Superset is a one-line image-tag
+bump.
+
+> **The design rule that keeps upgrades cheap:** we never modify, patch, or inject
+> into Superset — not its source, not its image contents, not its rendered
+> HTML/DOM. Nothing here depends on Superset's internals, so a new Superset release
+> can't silently break us.
 >
-> Successor to the older `superset-aisc` build, which baked branding into a
-> custom image and injected a UI widget into Superset's DOM via an nginx
-> sidecar. Both of those coupling points are gone.
+> This supersedes the older `superset-aisc` build, which baked branding into a
+> custom image and injected a UI widget into Superset's DOM via an nginx sidecar.
+> Both of those coupling points are gone.
 
 ---
 
