@@ -1,0 +1,24 @@
+# Overlay: connect the dashboard to a locally running aisc stack.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.aisc.yml up -d
+#
+# Joins the aisc stack's backend network so the Testing DB is reachable as
+# `postgres:5432` (service name on that network). Set in .env:
+#   AISC_RESULTS_DB_URI=postgresql+psycopg2://dashboard_ro:<pw>@postgres:5432/aisc
+# (create the read-only `dashboard_ro` role first — see README §4.1)
+#
+# The external network's real name is "<aisc-project>_backend" — i.e. the aisc
+# checkout's directory name (default "aisc") + "_backend". If your aisc checkout
+# lives in a differently-named dir or uses COMPOSE_PROJECT_NAME, set the actual
+# name in .env:  AISC_NETWORK=<name>   (find it with `docker network ls`).
+
+services:
+  superset:
+    networks:
+      - default
+      - aisc_net
+
+networks:
+  aisc_net:
+    external: true
+    name: ${AISC_NETWORK:-aisc_backend}
