@@ -1,0 +1,18 @@
+# secrets / local config
+.env
+
+# python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# local databases / dumps
+*.db
+*.sqlite
+*.sql.gz
+
+# editor / OS
+.DS_Store
+*.swp

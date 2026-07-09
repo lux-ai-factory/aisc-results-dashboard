@@ -1,0 +1,78 @@
+# Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
+# SPDX-License-Identifier: Apache-2.0
+#
+# Stock Superset + a thin deps layer + bind-mounted config/extension/branding.
+# No nginx sidecar: Superset serves directly on :8188. No celery worker (all
+# async features are off). Rebranding needs NO rebuild -- change .env + the
+# mounted logo and restart.
+name: superset-overlay
+
+x-superset-env: &superset-env
+  SUPERSET_DB_URI: postgresql+psycopg2://superset:${SUPERSET_DB_PASSWORD:-superset}@superset-db:5432/superset
+  SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-aisc-dev-secret-change-me}
+  REDIS_HOST: superset-redis
+  REDIS_PORT: "6379"
+  IMMUDB_HOST: immudb
+  IMMUDB_PORT: "3322"
+  IMMUDB_USER: ${IMMUDB_USER:-immudb}
+  IMMUDB_PASSWORD: ${IMMUDB_PASSWORD:-immudb}
+  AISC_AUDIT_ENABLED: "true"
+  AISC_RESULTS_DB_URI: ${AISC_RESULTS_DB_URI:-}
+  # ---- branding (default = AISC; override for another tenant) ----
+  BRANDING_APP_NAME: ${BRANDING_APP_NAME:-}
+  BRANDING_LOGO: ${BRANDING_LOGO:-}
+  BRANDING_PRIMARY: ${BRANDING_PRIMARY:-}
+  BRANDING_SECONDARY: ${BRANDING_SECONDARY:-}
+  # ---- interactive embedding: origins allowed to frame the dashboard ----
+  EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-}
+  # ---- Keycloak SSO (AISC_OAUTH=1 to enable) ----
+  AISC_OAUTH: ${AISC_OAUTH:-}
+  OIDC_ISSUER: ${OIDC_ISSUER:-}
+  OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+  OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+
+services:
+  superset-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: superset
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: ${SUPERSET_DB_PASSWORD:-superset}
+    volumes: [superset_db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  superset-redis:
+    image: redis:7-alpine
+
+  immudb:
+    image: codenotary/immudb:latest
+    command: ["--auth"]
+    environment:
+      IMMUDB_ADMIN_PASSWORD: ${IMMUDB_PASSWORD:-immudb}
+
+  superset:
+    build: .
+    image: superset-overlay
+    environment: *superset-env
+    ports:
+      - "8188:8088"
+    volumes:
+      # the entire customization, mounted read-only -- no rebuild to change it
+      - ./superset_config.py:/app/pythonpath/superset_config.py:ro
+      - ./aisc_ext:/app/pythonpath/aisc_ext:ro
+      # served at /static/assets/branding/<tenant>/... ; APP_ICON points here
+      - ./branding:/app/superset/static/assets/branding:ro
+    depends_on:
+      superset-db:
+        condition: service_healthy
+      superset-redis:
+        condition: service_started
+      immudb:
+        condition: service_started
+
+volumes:
+  superset_db:
