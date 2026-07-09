@@ -69,7 +69,8 @@ Nothing above touches Superset's source or DOM.
 ## 2. Quick start
 
 ```bash
-cd ~/superset-overlay
+git clone https://github.com/lux-ai-factory/aisc-results-dashboard.git
+cd aisc-results-dashboard
 ./scripts/bootstrap.sh
 ```
 
@@ -235,7 +236,7 @@ prior build.
 ## 11. Repository layout
 
 ```
-superset-overlay/
+aisc-results-dashboard/
 ├── Dockerfile              # 4 lines: stock image + 3 pip deps. No source, no branding.
 ├── docker-compose.yml      # stock image + bind-mounts. Serves :8188. No sidecar/worker.
 ├── superset_config.py      # the config overlay (mounted on PYTHONPATH)
