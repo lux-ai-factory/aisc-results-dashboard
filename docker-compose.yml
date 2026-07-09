@@ -5,7 +5,7 @@
 # No nginx sidecar: Superset serves directly on :8188. No celery worker (all
 # async features are off). Rebranding needs NO rebuild -- change .env + the
 # mounted logo and restart.
-name: superset-overlay
+name: aisc-results-dashboard
 
 x-superset-env: &superset-env
   SUPERSET_DB_URI: postgresql+psycopg2://superset:${SUPERSET_DB_PASSWORD:-superset}@superset-db:5432/superset
@@ -56,7 +56,7 @@ services:
 
   superset:
     build: .
-    image: superset-overlay
+    image: aisc-results-dashboard
     environment: *superset-env
     ports:
       - "8188:8088"
