@@ -37,3 +37,23 @@ class KeycloakSecurityManager(SupersetSecurityManager):
         self.update_user(user)
         log.info("Synced %s -> %s", user.username, desired)
         return user
+
+def skip_provider_picker(path, method, authenticated, provider="keycloak"):
+    """The provider to jump to for this request, or None to leave it alone.
+
+    With a single OAuth provider, Flask-AppBuilder's /login/ is a page with one
+    button on it. Anyone arriving there already has a session at the identity
+    provider more often than not, so the button is pure friction: sending them
+    straight to /login/<provider> logs them in without a visible sign-in screen,
+    and sends them to the provider's own form when they do need to authenticate.
+
+    Deliberately narrow: only an anonymous GET of the login page itself. The
+    provider route is left alone (it is where this sends people, so redirecting
+    it would loop), POSTs are left alone (FAB's own form), and an authenticated
+    visitor is left to FAB, which already redirects them to the index rather
+    than starting another OAuth round trip."""
+    if method != "GET" or authenticated:
+        return None
+    if path.rstrip("/") != "/login":
+        return None
+    return provider

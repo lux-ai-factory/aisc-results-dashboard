@@ -137,6 +137,28 @@ if os.environ.get("AISC_OAUTH") == "1":
 # the one upgrade-fragile piece. Superset's own Flask-AppBuilder renders these
 # views, so there is zero coupling to Superset's React/DOM.
 def FLASK_APP_MUTATOR(app):  # noqa: N802 (Superset hook name)
+    # ---- one provider, so skip FAB's one-button login page ----
+    # An anonymous GET of /login/ goes straight to the provider. With a session
+    # at the identity provider that is invisible; without one it lands on the
+    # provider's own form instead of a page asking which provider to use.
+    if os.environ.get("AISC_OAUTH") == "1":
+        from flask import redirect, request, url_for  # noqa: E402
+        from aisc_ext.sso import skip_provider_picker  # noqa: E402
+
+        @app.before_request
+        def _skip_provider_picker():  # pragma: no cover - exercised in the app
+            try:
+                from flask_login import current_user
+                authenticated = bool(getattr(current_user, "is_authenticated", False))
+            except Exception:
+                authenticated = False
+            provider = skip_provider_picker(request.path, request.method, authenticated)
+            if provider is None:
+                return None
+            target = url_for("AuthOAuthView.login", provider=provider)
+            nxt = request.args.get("next")
+            return redirect(f"{target}?next={nxt}" if nxt else target)
+
     with app.app_context():
         from aisc_ext.comments.api import CommentApi
         from aisc_ext.comments.model import AiscComment
