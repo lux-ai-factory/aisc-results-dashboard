@@ -32,7 +32,10 @@ CACHE_CONFIG = {"CACHE_TYPE": "RedisCache", "CACHE_REDIS_HOST": REDIS_HOST,
 # image rebuild. See aisc_ext/branding.py and .env.example.
 APP_NAME = branding.app_name()
 APP_ICON = branding.app_icon()
-LOGO_TARGET_PATH = "/"
+# The dashboard is one of the six steps, so its logo leads back out to the
+# launcher rather than to Superset's own home. Superset knows nothing of a
+# project, so it returns to the project list.
+LOGO_TARGET_PATH = os.environ.get("LAUNCHER_URL", "http://localhost:8100/")
 FAVICONS = branding.favicons()
 THEME_OVERRIDES = branding.theme_overrides()
 EXTRA_CATEGORICAL_COLOR_SCHEMES = branding.categorical_schemes()
