@@ -8,14 +8,14 @@
 name: aisc-results-dashboard
 
 x-superset-env: &superset-env
-  SUPERSET_DB_URI: postgresql+psycopg2://superset:${SUPERSET_DB_PASSWORD:-superset}@superset-db:5432/superset
-  SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-aisc-dev-secret-change-me}
+  SUPERSET_DB_URI: postgresql+psycopg2://superset:${SUPERSET_DB_PASSWORD:?see .env.example: openssl rand -hex 32}@superset-db:5432/superset
+  SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?see .env.example: openssl rand -hex 32}
   REDIS_HOST: superset-redis
   REDIS_PORT: "6379"
   IMMUDB_HOST: immudb
   IMMUDB_PORT: "3322"
   IMMUDB_USER: ${IMMUDB_USER:-immudb}
-  IMMUDB_PASSWORD: ${IMMUDB_PASSWORD:-immudb}
+  IMMUDB_PASSWORD: ${IMMUDB_PASSWORD:?see .env.example: openssl rand -hex 32}
   AISC_AUDIT_ENABLED: "true"
   AISC_RESULTS_DB_URI: ${AISC_RESULTS_DB_URI:-}
   # ---- branding (default = AISC; override for another tenant) ----
@@ -37,7 +37,7 @@ services:
     environment:
       POSTGRES_DB: superset
       POSTGRES_USER: superset
-      POSTGRES_PASSWORD: ${SUPERSET_DB_PASSWORD:-superset}
+      POSTGRES_PASSWORD: ${SUPERSET_DB_PASSWORD:?see .env.example: openssl rand -hex 32}
     volumes: [superset_db:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U superset"]
@@ -52,7 +52,7 @@ services:
     image: codenotary/immudb:latest
     command: ["--auth"]
     environment:
-      IMMUDB_ADMIN_PASSWORD: ${IMMUDB_PASSWORD:-immudb}
+      IMMUDB_ADMIN_PASSWORD: ${IMMUDB_PASSWORD:?see .env.example: openssl rand -hex 32}
 
   superset:
     build: .

@@ -18,7 +18,17 @@ import os
 from aisc_ext import branding
 
 # ---- core ----
-SECRET_KEY = os.environ.get("SUPERSET_SECRET_KEY", "aisc-dev-secret-change-me")
+# No default. This signs every session cookie this dashboard issues, so a
+# shipped value means anyone who read this repository can mint a session as any
+# user, Admin included, and that session reaches everything the dashboard can
+# read. Refusing to start is the only honest behaviour.
+try:
+    SECRET_KEY = os.environ["SUPERSET_SECRET_KEY"]
+except KeyError:  # pragma: no cover - the message is the point
+    raise RuntimeError(
+        "SUPERSET_SECRET_KEY is not set. Generate one with `openssl rand -hex 32` "
+        "and put it in .env; see .env.example."
+    ) from None
 SQLALCHEMY_DATABASE_URI = os.environ["SUPERSET_DB_URI"]
 
 # ---- redis cache ----
