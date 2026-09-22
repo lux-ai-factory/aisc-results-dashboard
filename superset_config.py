@@ -163,6 +163,13 @@ def FLASK_APP_MUTATOR(app):  # noqa: N802 (Superset hook name)
             return redirect(f"{target}?next={nxt}" if nxt else target)
 
     with app.app_context():
+        # The results database, from AISC_RESULTS_DB_URI rather than from a
+        # connection registered by hand: a hand-typed address can point at
+        # another stack's Postgres and work.
+        from aisc_ext.results_db import register_results_database
+
+        register_results_database(app)
+
         from aisc_ext.comments.api import CommentApi
         from aisc_ext.comments.model import AiscComment
         from aisc_ext.comments.views import AiscCommentView
