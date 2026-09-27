@@ -39,7 +39,9 @@ cat <<EOF
 ==> done. Dashboard: http://localhost:8188  (login: ${ADMIN_USER} / ${ADMIN_PASSWORD})
 
 Next:
-  - register your results DB (Settings -> Database Connections) using AISC_RESULTS_DB_URI
+  - set AISC_MEMBERSHIP_DB_URI (dashboard_ro on the platform database) for sign-in memberships
+  - project connections are registered by the platform's bridge, one per project database,
+    on AISC_PROJECT_DB_HOSTPORT; nothing to register by hand
   - to white-label: see branding/README.md
   - to upgrade Superset: bump the tag in Dockerfile, then re-run this script
 EOF

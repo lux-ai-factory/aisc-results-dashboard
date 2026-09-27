@@ -4,9 +4,10 @@
 
 For project P (hex = its pid without dashes) `register_project` creates, and
 `unregister_project` removes:
-  - dataset engine_results_<hex> on the "AISC Results" connection, the
-    engine's measurements of P only, each with the system version (card
-    version) its evaluation was stamped with;
+  - dataset engine_results_<hex> on the project's own connection ("AISC
+    Controls <slug>", onto project_<hex>), the engine's measurements of that
+    database, each with the system version (card version) its evaluation was
+    stamped with (isolation I10.1: the database is the project);
   - connection "AISC Controls <slug>" onto project_<hex> as dashboard_ro, with
     dataset controls_answers_<hex>: the answers with their stamp;
   - role AiscProject_<hex>, which may read those two datasets and nothing else;
@@ -99,14 +100,15 @@ def test_s11_project_role_name_helper(projects):
 
 # ---- the engine dataset ----------------------------------------------------
 
-def test_s11_1_engine_dataset_is_on_the_results_connection_and_carries_the_version(projects):
-    """S11.1: engine_results_<hex> selects the stamp through core.system."""
+def test_s11_1_engine_dataset_is_on_the_project_connection_and_carries_the_version(projects):
+    """S11.1 as changed by I10.1: engine_results_<hex> sits on the project's own
+    connection and selects the stamp through project.system of that database."""
     store = FakeStore()
     _register(projects, store)
     ds = store.items("dataset")[f"engine_results_{HEX}"]
-    assert ds["database"] == "AISC Results"
+    assert ds["database"] == "AISC Controls mcas"
     sql = " ".join(ds["sql"].split()).lower()
-    assert "left join core.system s on s.pid = e.system_id" in sql
+    assert "left join project.system s on s.pid = e.system_id" in sql
     assert "s.number as system_version" in sql
     assert "s.pid as system_version_pid" in sql
     for col in ("m.score", "m.unit", "m.time", "m.dimensions", "met.name as metric",
@@ -115,18 +117,22 @@ def test_s11_1_engine_dataset_is_on_the_results_connection_and_carries_the_versi
 
 
 def test_s11_4_engine_dataset_filters_on_this_project_only(projects):
-    """S11.4: the SQL names P's pid, and no other."""
-    sql = projects.engine_results_sql(PID)
-    assert f"'{PID}'" in sql
+    """S11.4 as changed by I10.1: the database is the project, so the SQL names
+    no pid at all and filters on nothing."""
+    sql = projects.engine_results_sql()
+    assert PID not in sql
     assert OTHER not in sql
-    assert re.search(r"\bwhere\b", sql, re.I)
+    assert not re.search(r"\bwhere\b", sql, re.I)
+    assert "project_id" not in sql
 
 
 @pytest.mark.parametrize("bad", ["x' OR '1'='1", "", "not-a-uuid", PID + "'; drop table x; --"])
 def test_s11_4_a_pid_that_is_not_a_uuid_never_reaches_the_sql(projects, bad):
-    """S11.4: the pid is spliced into a virtual dataset, so it must be a uuid."""
+    """S11.4: the pid becomes part of a connection URI and a role name, so it must be a uuid."""
     with pytest.raises(ValueError):
-        projects.engine_results_sql(bad)
+        projects.register_project(bad, "s", "n", store=FakeStore(), controls_password="pw")
+    with pytest.raises(ValueError):
+        projects.project_role_name(bad)
 
 
 # ---- the controls connection and dataset -----------------------------------

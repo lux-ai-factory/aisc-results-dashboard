@@ -194,12 +194,12 @@ def FLASK_APP_MUTATOR(app):  # noqa: N802 (Superset hook name)
             return redirect(f"{target}?next={nxt}" if nxt else target)
 
     with app.app_context():
-        # The results database, from AISC_RESULTS_DB_URI rather than from a
-        # connection registered by hand: a hand-typed address can point at
-        # another stack's Postgres and work.
-        from aisc_ext.results_db import register_results_database
-
-        register_results_database(app)
+        # No connection onto the shared `platform` database is registered: each
+        # project's datasets sit on that project's own connection, which the
+        # platform's bridge makes (aisc_ext/projects.py), and memberships are
+        # read at sign-in over a plain DSN (aisc_ext/results_db.py). Analytics
+        # connections use Superset's default engines, which keep no persistent
+        # pool (isolation I10.4).
         _install_extension(app)
 
 

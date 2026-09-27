@@ -8,7 +8,7 @@ The unit tests cover what the page decides; this covers what only Superset can
 answer: that the routes exist, that they ask who is calling, and that the
 Comments list page cannot write rows behind the API's back.
 
-It builds what it needs (a dataset over the results database, two charts, a
+It builds what it needs (a dataset over a project's connection, two charts, a
 dashboard, three viewers, an admin and a role that may read that dataset), runs
 Superset's own test client against them, and removes every one of them
 afterwards, comments included, whatever the outcome. Exit status 0 means every
@@ -21,7 +21,7 @@ import uuid
 
 from superset.app import create_app
 
-from aisc_ext.results_db import RESULTS_DB_NAME
+from aisc_ext.projects import PROJECT_TAG
 
 app = create_app()
 TAG = f"zz-verify-review-{uuid.uuid4().hex[:6]}"
@@ -41,8 +41,14 @@ def setup():
     from superset.models.dashboard import Dashboard
     from superset.models.slice import Slice
 
-    results_db = db.session.query(Database).filter_by(database_name=RESULTS_DB_NAME).one()
-    table = SqlaTable(table_name="measurement", schema="engine", database=results_db)
+    # A project connection ("AISC Controls <slug>", made by the platform's bridge):
+    # the dashboard registers no other. Its extra carries the project's pid.
+    project_db = next((d for d in db.session.query(Database).order_by(Database.id)
+                       if PROJECT_TAG in json.loads(d.extra or "{}")), None)
+    if project_db is None:
+        sys.exit("no project connection in Superset: create a project on the platform first "
+                 "(its bridge registers 'AISC Controls <slug>'), then re-run this check")
+    table = SqlaTable(table_name="measurement", schema="engine", database=project_db)
     db.session.add(table)
     db.session.flush()
     second = Slice(slice_name=f"{TAG} second", viz_type="table", datasource_type="table",

@@ -2,10 +2,13 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.aisc.yml up -d
 #
-# Joins the aisc stack's backend network so the Testing DB is reachable as
+# Joins the aisc stack's backend network so its Postgres is reachable as
 # `postgres:5432` (service name on that network). Set in .env:
-#   AISC_RESULTS_DB_URI=postgresql+psycopg2://dashboard_ro:<pw>@postgres:5432/aisc
-# (create the read-only `dashboard_ro` role first — see README §4.1)
+#   AISC_MEMBERSHIP_DB_URI=postgresql+psycopg2://dashboard_ro:<pw>@postgres:5432/platform
+#   AISC_PROJECT_DB_HOSTPORT=postgres:5432
+# The first is read at sign-in for memberships only; each project's results are
+# read over a connection onto that project's own database, which the platform's
+# bridge registers from the second. (The platform's init files create dashboard_ro.)
 #
 # The external network's real name is "<aisc-project>_backend" — i.e. the aisc
 # checkout's directory name (default "aisc") + "_backend". If your aisc checkout

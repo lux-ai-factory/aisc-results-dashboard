@@ -17,7 +17,10 @@ x-superset-env: &superset-env
   IMMUDB_USER: ${IMMUDB_USER:-immudb}
   IMMUDB_PASSWORD: ${IMMUDB_PASSWORD:?see .env.example: openssl rand -hex 32}
   AISC_AUDIT_ENABLED: "true"
-  AISC_RESULTS_DB_URI: ${AISC_RESULTS_DB_URI:-}
+  # memberships at sign-in: dashboard_ro on the platform database (a plain DSN, never a connection)
+  AISC_MEMBERSHIP_DB_URI: ${AISC_MEMBERSHIP_DB_URI:-}
+  # host:port of the project databases; the bridge builds one connection per project from it
+  AISC_PROJECT_DB_HOSTPORT: ${AISC_PROJECT_DB_HOSTPORT:-postgres:5432}
   # ---- branding (default = AISC; override for another tenant) ----
   BRANDING_APP_NAME: ${BRANDING_APP_NAME:-}
   BRANDING_LOGO: ${BRANDING_LOGO:-}

@@ -11,6 +11,7 @@ import os
 from superset.security import SupersetSecurityManager  # type: ignore
 
 from aisc_ext.projects import MEMBER_PROJECTS_SQL
+from aisc_ext.results_db import membership_uri
 from aisc_ext.security import roles_for_login
 
 log = logging.getLogger(__name__)
@@ -34,17 +35,26 @@ class KeycloakSecurityManager(SupersetSecurityManager):
         }
 
     def _member_projects(self, subject):
-        """The projects this subject is in, over the dashboard_ro results
-        connection. None known (or the database down) means no project role."""
+        """The projects this subject is in, read from core.project_member over
+        AISC_MEMBERSHIP_DB_URI (dashboard_ro on `platform`). That DSN is a plain
+        SQLAlchemy engine for this one sign-in, without a pool, disposed after:
+        it is never a Superset connection, so SQL Lab cannot reach `platform`.
+        None known, a DSN that is not read-only, or the database down means no
+        project role."""
         if not subject:
             return []
-        uri = os.environ.get("AISC_RESULTS_DB_URI", "")
+        try:
+            uri = membership_uri(os.environ)
+        except ValueError as exc:
+            log.error("memberships not read: %s", exc)
+            return []
         if not uri:
             return []
         try:
             from sqlalchemy import create_engine
+            from sqlalchemy.pool import NullPool
 
-            engine = create_engine(uri)
+            engine = create_engine(uri, poolclass=NullPool)
             try:
                 with engine.connect() as connection:
                     rows = connection.exec_driver_sql(MEMBER_PROJECTS_SQL, {"subject": subject})

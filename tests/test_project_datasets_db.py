@@ -11,19 +11,25 @@ AISC_DASHBOARD_TEST_PG_CONTAINER and started as
 
 The venv has no Postgres driver, so SQL goes through `docker exec psql` over
 the container's local socket (trust), connecting as the role named, which also
-checks CONNECT. The fixture applies the monorepo's init files, every platform
-migration, the platform's project template and every controls migration, then
-seeds: project P and project Q, versions v1 and v2 of P, an evaluation of P
-stamped v1, an evaluation of Q, and a controls answer in P's database stamped
-v2. The engine tables are the frozen engine's (e34fca3), reduced to the
-columns the dataset reads.
+checks CONNECT. The fixture applies the monorepo's init files (on a bare
+cluster only) and every platform migration, then makes one database per
+project, P and Q, each with every platform template file and every controls
+migration, and seeds in each: its card versions in project.system (v1 and v2
+for P, qv1 for Q), the engine tables with one evaluation stamped v1 (qv1 for Q),
+and in P a controls answer stamped v2. The engine tables are the frozen
+engine's (e34fca3), reduced to the columns the dataset reads.
 
 Rule ids are from docs/superpowers/pipeline-2026-09-23/03-specs.md.
+
+Changed by the isolation (S-D13, 01-specs.md I10.1, I19.3): the engine rows and
+the card versions used to live in `platform` (core.system, engine.*); each
+project's now live in its own database, where the engine dataset runs.
 """
 import importlib
 import os
 import pathlib
 import subprocess
+import uuid
 
 import pytest
 
@@ -79,6 +85,16 @@ RESET ROLE;
 """
 
 
+PRISMA_MIGRATIONS_DDL = """
+SET ROLE controls_rw;
+CREATE TABLE IF NOT EXISTS controls."_prisma_migrations" (
+  "id" varchar(36) PRIMARY KEY NOT NULL, "checksum" varchar(64) NOT NULL, "finished_at" timestamptz,
+  "migration_name" varchar(255) NOT NULL, "logs" text, "rolled_back_at" timestamptz,
+  "started_at" timestamptz NOT NULL DEFAULT now(), "applied_steps_count" integer NOT NULL DEFAULT 0);
+RESET ROLE;
+"""
+
+
 class Seeded:
     """The prepared DBs, and what could not be prepared because the feature it
     needs is not built yet. A test that needs a part fails with that reason
@@ -86,6 +102,7 @@ class Seeded:
 
     def __init__(self):
         self.db = f"project_{P_HEX}"
+        self.q_db = f"project_{Q.replace('-', '')}"
         self.missing = {}
 
     def need(self, *parts):
@@ -102,41 +119,57 @@ def seeded():
     except AssertionError as exc:
         s.missing["platform"] = str(exc)[-600:]
     try:
-        _seed_controls(s.db)
+        _seed_project(s.db, [(V1, 1), (V2, 2)], V1, answer_version=V2)
+        _seed_project(s.q_db, [(QV1, 1)], QV1)
     except AssertionError as exc:
-        s.missing["controls"] = str(exc)[-600:]
+        s.missing["project"] = str(exc)[-600:]
     return s
 
 
 def _seed_platform():
-    for f in ("init/platform-db.sql", "init/project-databases.sql"):
-        psql((ROOT / f).read_text())
+    # The init files are not re-runnable over an initialised cluster, and
+    # test_isolation_dashboard_db.py (collected first) may have applied them.
+    if psql("SELECT to_regnamespace('core') IS NULL;").stdout.strip() == "t":
+        for f in ("init/platform-db.sql", "init/project-databases.sql"):
+            psql((ROOT / f).read_text())
     for f in sorted((ROOT / "platform/migrations").glob("*.sql")):
         psql("SET ROLE platform_rw;\n" + f.read_text())
-    psql(ENGINE_DDL)
-    psql(f"""
-INSERT INTO core.project (pid, name, slug) VALUES ('{P}', 'MCAS', 'mcas'), ('{Q}', 'Other', 'other');
-INSERT INTO core.system (pid, project_id, name, version, number) VALUES
-  ('{V1}', '{P}', 'MCAS', '1.2.0', 1), ('{V2}', '{P}', 'MCAS', '1.2.0', 2), ('{QV1}', '{Q}', 'Other', NULL, 1);
-INSERT INTO engine.project (pid, name, description, project_id) VALUES
-  (gen_random_uuid(), 'MCAS', '', '{P}'), (gen_random_uuid(), 'Other', '', '{Q}');
-INSERT INTO engine.metric (pid, name) VALUES (gen_random_uuid(), 'accuracy');
-INSERT INTO engine.evaluation (pid, status, project_id, system_id)
-  SELECT gen_random_uuid(), 'Finished', id, CASE WHEN project_id = '{P}' THEN '{V1}'::uuid ELSE '{QV1}'::uuid END
-  FROM engine.project;
-INSERT INTO engine.observation (pid, evaluation_id) SELECT gen_random_uuid(), id FROM engine.evaluation;
-INSERT INTO engine.measurement (pid, time, score, unit, metric_id, observation_id)
-  SELECT gen_random_uuid(), now(), 0.9, 'ratio', (SELECT id FROM engine.metric), id FROM engine.observation;
-""")
+    psql(f"INSERT INTO core.project (pid, name, slug) VALUES ('{P}', 'MCAS', 'mcas'), ('{Q}', 'Other', 'other');")
 
 
-def _seed_controls(db):
-    # P's own database, as the platform provisions it
+def _seed_project(db, versions, eval_version, *, answer_version=None):
+    """One project's own database, as the platform provisions it: its card
+    versions, its engine rows (one evaluation stamped eval_version) and, with
+    answer_version, one controls answer stamped with it. The versions go in
+    before the answer, so controls' foreign key to project.system (I6.2) holds."""
+    pid = str(uuid.UUID(db.removeprefix("project_")))
     psql(f'CREATE DATABASE "{db}" OWNER platform_rw;')
     for f in sorted((ROOT / "platform/project-template").glob("*.sql")):
         psql("SET ROLE platform_rw;\n" + f.read_text(), db=db)
+    # Prisma makes its bookkeeping table before it applies a migration, and the
+    # controls history relies on it (20260926000100 revokes the readers' SELECT on
+    # it), so this replay with psql makes it first, with Prisma's own definition.
+    psql(PRISMA_MIGRATIONS_DDL, db=db)
     for f in sorted((ROOT / "apps/controls/prisma/migrations").glob("*/migration.sql")):
         psql("SET ROLE controls_rw;\nSET search_path = controls;\n" + f.read_text(), db=db)
+    rows =", ".join(f"('{v}', {n}, 'X', '1.2.0')" for v, n in versions)
+    psql(f"SET ROLE platform_rw;\nINSERT INTO project.system (pid, number, name, version) VALUES {rows};", db=db)
+    # The SELECT grant stands in for the engine's migrate_projects grants (I7.6).
+    psql(ENGINE_DDL + "\nSET ROLE engine_rw; GRANT SELECT ON ALL TABLES IN SCHEMA engine TO dashboard_ro; RESET ROLE;",
+         db=db)
+    psql(f"""
+SET ROLE engine_rw;
+SET search_path = engine;
+INSERT INTO project (pid, name, description, project_id) VALUES (gen_random_uuid(), 'X', '', '{pid}');
+INSERT INTO metric (pid, name) VALUES (gen_random_uuid(), 'accuracy');
+INSERT INTO evaluation (pid, status, project_id, system_id)
+  SELECT gen_random_uuid(), 'Finished', id, '{eval_version}' FROM project;
+INSERT INTO observation (pid, evaluation_id) SELECT gen_random_uuid(), id FROM evaluation;
+INSERT INTO measurement (pid, time, score, unit, metric_id, observation_id)
+  SELECT gen_random_uuid(), now(), 0.9, 'ratio', (SELECT id FROM metric), id FROM observation;
+""", db=db)
+    if answer_version is None:
+        return
     psql(f"""
 SET search_path = controls;
 INSERT INTO source (id, slug, name, updated_at) VALUES ('src', 'src', 'Source', now());
@@ -146,7 +179,7 @@ INSERT INTO checklist_question (id, "checklistId", "order", text) VALUES ('q1', 
 INSERT INTO submission (id, "checklistId", label, updated_at) VALUES ('s1', 'cl', 'first', now());
 INSERT INTO submission_answer (id, "submissionId", "questionId", answer, score,
   system_version_pid, system_version_number, answered_at)
-  VALUES ('a1', 's1', 'q1', 'yes', 3, '{V2}', 2, now());
+  VALUES ('a1', 's1', 'q1', 'yes', 3, '{answer_version}', 2, now());
 """, db=db)
 
 
@@ -175,30 +208,35 @@ def _rows(out):
 
 
 def test_s11_1_engine_results_carries_the_evaluations_version(seeded, projects):
-    """S11.1: the evaluation stamped v1 shows system_version = 1."""
-    seeded.need("platform")
-    sql = projects.engine_results_sql(P)
-    out = psql(f"SELECT system_version, system_version_pid FROM ({sql}) t;", user="dashboard_ro")
+    """S11.1: the evaluation stamped v1 shows system_version = 1, read as
+    dashboard_ro in P's own database (I10.1)."""
+    seeded.need("project")
+    sql = projects.engine_results_sql()
+    out = psql(f"SELECT system_version, system_version_pid FROM ({sql}) t;", db=seeded.db, user="dashboard_ro")
     rows = _rows(out)
     assert rows, "no rows for P"
     assert {tuple(r) for r in rows} == {("1", V1)}
 
 
 def test_s11_4_engine_results_never_returns_another_projects_rows(seeded, projects):
-    """S11.4: Q's evaluation (stamped QV1) never appears in P's dataset."""
-    seeded.need("platform")
-    sql = projects.engine_results_sql(P)
-    out = psql(f"SELECT count(*) FROM ({sql}) t WHERE system_version_pid = '{QV1}';", user="dashboard_ro")
+    """S11.4: Q's evaluation (stamped QV1) never appears in P's dataset; the
+    same SQL in Q's database shows only Q's."""
+    seeded.need("project")
+    sql = projects.engine_results_sql()
+    out = psql(f"SELECT count(*) FROM ({sql}) t WHERE system_version_pid = '{QV1}';",
+               db=seeded.db, user="dashboard_ro")
     assert out.stdout.strip() == "0"
-    total = psql(f"SELECT count(*) FROM ({sql}) t;", user="dashboard_ro")
+    total = psql(f"SELECT count(*) FROM ({sql}) t;", db=seeded.db, user="dashboard_ro")
     assert total.stdout.strip() == "1"
+    in_q = psql(f"SELECT system_version_pid FROM ({sql}) t;", db=seeded.q_db, user="dashboard_ro")
+    assert {r[0] for r in _rows(in_q)} == {QV1}
 
 
 def test_s11_1_controls_answers_carries_the_answers_version(seeded, projects):
     """S11.1: the answer stamped v2 shows system_version_number = 2, read as
     dashboard_ro in P's own database (needs 0002_dashboard.sql for CONNECT and
     USAGE, and the controls migration for SELECT, D5)."""
-    seeded.need("controls")
+    seeded.need("project")
     sql = projects.controls_answers_sql()
     out = psql(f"SELECT system_version_number, answer FROM ({sql}) t;", db=seeded.db, user="dashboard_ro")
     assert _rows(out) == [["2", "yes"]]
@@ -206,7 +244,7 @@ def test_s11_1_controls_answers_carries_the_answers_version(seeded, projects):
 
 def test_s11_dashboard_ro_may_connect_to_the_project_database(seeded):
     """0002_dashboard.sql: GRANT CONNECT and USAGE to dashboard_ro."""
-    seeded.need("controls")
+    seeded.need("project")
     out = psql("SELECT has_schema_privilege('controls', 'USAGE');", db=seeded.db, user="dashboard_ro", check=False)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "t"
@@ -214,7 +252,7 @@ def test_s11_dashboard_ro_may_connect_to_the_project_database(seeded):
 
 def test_s11_dashboard_ro_reads_but_never_writes_controls(seeded):
     """D5: SELECT is granted; writing stays refused."""
-    seeded.need("controls")
+    seeded.need("project")
     ok = psql("SELECT count(*) FROM controls.submission_answer;", db=seeded.db, user="dashboard_ro", check=False)
     assert ok.returncode == 0, ok.stderr
     bad = psql("UPDATE controls.submission_answer SET score = 0;", db=seeded.db, user="dashboard_ro", check=False)

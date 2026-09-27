@@ -99,7 +99,8 @@ run works out of the box with the default AISC identity. `.env` is git-ignored.
 |---|---|
 | `SUPERSET_SECRET_KEY` | Flask secret. **Set a long random value for anything real.** |
 | `SUPERSET_DB_PASSWORD` | Password for the bundled metadata Postgres. |
-| `AISC_RESULTS_DB_URI` | Your results database. Register it as a connection in the UI after init. |
+| `AISC_MEMBERSHIP_DB_URI` | Memberships, read at sign-in: `dashboard_ro` on the platform database. A plain DSN, never a Superset connection. |
+| `AISC_PROJECT_DB_HOSTPORT` | Host and port of the project databases (default `postgres:5432`); the platform's bridge registers one connection per project, onto `project_<pid hex>` as `dashboard_ro`. |
 | `BRANDING_APP_NAME` / `BRANDING_LOGO` / `BRANDING_PRIMARY` / `BRANDING_SECONDARY` | White-label branding (see §4). Blank = default AISC identity. |
 | `EMBED_ALLOWED_ORIGINS` | Comma-separated origins allowed to embed charts in an iframe (see §5). |
 | `AISC_OAUTH` / `OIDC_*` | Keycloak SSO (see §7). Blank = local username/password login. |

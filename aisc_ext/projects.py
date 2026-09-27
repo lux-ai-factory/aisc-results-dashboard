@@ -5,11 +5,14 @@
 For project P (hex = its pid without dashes) `register_project` makes, and
 `unregister_project` removes:
 
-- dataset ``engine_results_<hex>`` on the "AISC Results" connection: the
-  engine's measurements of P only, each with the AI card version its evaluation
-  was stamped with;
-- connection ``AISC Controls <slug>`` onto P's own database as dashboard_ro,
-  with dataset ``controls_answers_<hex>``: the answers with their stamp;
+- connection ``AISC Controls <slug>`` onto P's own database ``project_<hex>``
+  as dashboard_ro (the name is historical: it now carries every dataset of P);
+- dataset ``engine_results_<hex>`` on that connection: the engine's
+  measurements in P's database, each with the AI card version its evaluation
+  was stamped with (from ``project.system`` of the same database). No pid
+  filter: the database is the project (isolation I10.1);
+- dataset ``controls_answers_<hex>`` on that connection: the answers with their
+  stamp;
 - role ``AiscProject_<hex>``, which may read those two datasets and nothing else;
 - dashboard ``aisc-<hex>``, for that role only: a line of score by
   system_version and a table of answers by system_version_number.
@@ -28,7 +31,7 @@ import os
 import re
 import uuid
 
-from aisc_ext.results_db import READ_ONLY_ROLE, RESULTS_DB_NAME
+from aisc_ext.results_db import READ_ONLY_ROLE
 
 _PID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _PID_HEX = re.compile(r"[0-9a-f]{32}")
@@ -37,7 +40,8 @@ ROLE_PREFIX = "AiscProject_"
 #: The key every object of a project carries, with the project's pid as value.
 PROJECT_TAG = "aisc_project"
 
-#: The projects a person is in, read over the dashboard_ro results connection.
+#: The projects a person is in, read at sign-in over AISC_MEMBERSHIP_DB_URI
+#: (dashboard_ro on `platform`, never a Superset connection; see results_db).
 #: No trailing semicolon: callers may wrap or append.
 MEMBER_PROJECTS_SQL = "SELECT project_id FROM core.project_member WHERE subject = %(subject)s"
 
@@ -48,10 +52,8 @@ SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
   FROM engine.measurement m
   JOIN engine.observation o ON o.id = m.observation_id
   JOIN engine.evaluation e ON e.id = o.evaluation_id
-  JOIN engine.project p ON p.id = e.project_id
   JOIN engine.metric met ON met.id = m.metric_id
-  LEFT JOIN core.system s ON s.pid = e.system_id
- WHERE p.project_id = '{pid}'
+  LEFT JOIN project.system s ON s.pid = e.system_id
 """
 
 _CONTROLS_ANSWERS_SQL = """
@@ -65,8 +67,9 @@ SELECT c.title, q.text, a.answer, a.score, a.system_version_number, a.answered_a
 
 
 def _pid(value) -> str:
-    """A project pid as lowercase text; ValueError unless it is a uuid. It is
-    spliced into a virtual dataset's SQL, so nothing else may get through."""
+    """A project pid as lowercase text; ValueError unless it is a uuid. It
+    becomes part of a connection URI, a role and object names, so nothing else
+    may get through."""
     text = str(value).lower()
     if not _PID.match(text):
         raise ValueError(f"not a project pid: {value!r}")
@@ -82,9 +85,11 @@ def project_role_name(pid) -> str:
     return f"{ROLE_PREFIX}{_hex(pid)}"
 
 
-def engine_results_sql(pid) -> str:
-    """The engine's measurements of this project only, with the card version."""
-    return _ENGINE_RESULTS_SQL.format(pid=_pid(pid))
+def engine_results_sql() -> str:
+    """The engine's measurements of the project database the connection points
+    at, with the card version. Takes no pid: each project database holds exactly
+    one project's engine rows."""
+    return _ENGINE_RESULTS_SQL
 
 
 def controls_answers_sql() -> str:
@@ -110,7 +115,9 @@ def register_project(pid, slug: str, name: str, *, store, controls_password: str
         "sqlalchemy_uri": f"postgresql+psycopg2://{READ_ONLY_ROLE}:{controls_password}@{host}/project_{hex_}",
         "allow_dml": False,
     })
-    store.upsert("dataset", engine_ds, {**tag, "database": RESULTS_DB_NAME, "sql": engine_results_sql(pid)})
+    # A dataset registered before the isolation sits on "AISC Results"; this
+    # upsert moves it onto the project connection and keeps its id (I10.1).
+    store.upsert("dataset", engine_ds, {**tag, "database": database, "sql": engine_results_sql()})
     store.upsert("dataset", controls_ds, {**tag, "database": database, "sql": controls_answers_sql()})
     store.upsert("role", role, {**tag, "permissions": [
         ("datasource_access", engine_ds),
@@ -238,6 +245,12 @@ class SupersetStore:
         if found is None:
             found = SqlaTable(table_name=key)
             session.add(found)
+        # A dataset that moves connection keeps its id. Its permission names
+        # (perm, schema_perm) are left alone on purpose: Superset's own
+        # dataset_before_update hook sees the database change, renames the
+        # dataset's view menu from the old perm (so every role that held it keeps
+        # it) and rewrites tables.perm and the perm of every chart on it. Setting
+        # perm here first would make old and new names equal and skip all that.
         found.database = database
         found.sql = spec["sql"]
         found.extra = json.dumps({PROJECT_TAG: spec[PROJECT_TAG]})
