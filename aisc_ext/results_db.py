@@ -4,8 +4,7 @@ One database for the whole platform, read by a role that can read everything in
 it and write nothing. Which database that is comes from AISC_RESULTS_DB_URI, the
 variable the deployment already sets, rather than from a connection someone
 registers by hand in the UI: on a machine running several stacks, a hand-typed
-address can point at another stack's Postgres and work, which is exactly what
-had happened here.
+address can point at another stack's Postgres and appear to work.
 
 `registration_for` is the decision, kept apart from Superset so it can be read
 and tested on its own; `register_results_database` applies it through Superset's

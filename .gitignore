@@ -16,3 +16,4 @@ venv/
 # editor / OS
 .DS_Store
 *.swp
+.venv/

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>{% block title %}Review{% endblock %} · {{ app_name }}</title>
+  <link rel="icon" href="{{ logo }}">
+  <style>
+    :root {
+      --brand: {{ primary.base }};
+      --brand-dark: {{ primary.dark1 }};
+      --brand-soft: {{ primary.light1 }};
+      --ink: #1f2430;
+      --muted: #667085;
+      --line: #e4e7ec;
+      --bg: #f6f7f9;
+      --card: #ffffff;
+      --danger: #b42318;
+      --mine: #f2f5ff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; }
+    body {
+      font: 14px/1.45 Inter, "Segoe UI", system-ui, -apple-system, sans-serif;
+      color: var(--ink); background: var(--bg);
+      display: flex; flex-direction: column;
+    }
+    a { color: var(--brand); }
+    header.top {
+      display: flex; align-items: center; gap: 12px; flex: 0 0 auto;
+      padding: 0 16px; height: 52px; background: var(--card);
+      border-bottom: 1px solid var(--line);
+    }
+    header.top img { height: 28px; display: block; }
+    header.top > a { flex: 0 0 auto; }
+    header.top .btn { flex: 0 0 auto; }
+    header.top .crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    header.top .crumbs a { text-decoration: none; color: var(--muted); white-space: nowrap; }
+    header.top .crumbs a:hover { color: var(--brand); }
+    header.top .crumbs .sep { color: var(--line); }
+    header.top h1 {
+      font-size: 15px; font-weight: 600; margin: 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    header.top .spacer { flex: 1; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+      border: 1px solid var(--line); background: var(--card); color: var(--ink);
+      border-radius: 6px; padding: 6px 12px; font: inherit; text-decoration: none;
+      white-space: nowrap;
+    }
+    .btn:hover { border-color: var(--brand-soft); }
+    .btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+    .btn.primary:hover { background: var(--brand-dark); }
+    .btn.primary:disabled { opacity: .45; cursor: default; }
+    .btn.link { border: 0; background: none; padding: 2px 4px; color: var(--muted); }
+    .btn.link:hover { color: var(--brand); }
+    .btn.link.danger:hover { color: var(--danger); }
+    .me { color: var(--muted); font-size: 13px; white-space: nowrap; }
+    :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="top">
+    <a href="/" title="{{ app_name }}"><img src="{{ logo }}" alt="{{ app_name }}"></a>
+    <nav class="crumbs">{% block crumbs %}{% endblock %}</nav>
+    <span class="spacer"></span>
+    {% block actions %}{% endblock %}
+    <span class="me">Signed in as {{ me }}</span>
+  </header>
+  {% block body %}{% endblock %}
+</body>
+</html>

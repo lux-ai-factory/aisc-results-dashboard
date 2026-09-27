@@ -68,6 +68,9 @@ FEATURE_FLAGS = {
     # Legend select/deselect, cross-filters and drill survive because Superset
     # itself renders the chart in the iframe. Native flags, no DOM patching.
     "EMBEDDED_SUPERSET": True,
+    # One dashboard per project: a dashboard is visible to its project's role
+    # only, so a member sees theirs and nobody else's.
+    "DASHBOARD_RBAC": True,
     "EMBEDDABLE_CHARTS": True,
 }
 
@@ -128,7 +131,15 @@ if os.environ.get("AISC_OAUTH") == "1":
     AUTH_TYPE = AUTH_OAUTH
     CUSTOM_SECURITY_MANAGER = KeycloakSecurityManager
     AUTH_USER_REGISTRATION = True
-    AUTH_USER_REGISTRATION_ROLE = "Gamma"
+    # Not Gamma: Gamma may write charts and dashboards, so a first sign-in would
+    # hand out the right to edit what everybody else reads.
+    from aisc_ext.security import VIEWER_ROLE  # noqa: E402
+
+    AUTH_USER_REGISTRATION_ROLE = VIEWER_ROLE
+    # A role changed in Keycloak takes effect at the next sign-in rather than
+    # never: the mapping already runs on each login, this says FAB must not
+    # keep the roles it wrote the first time.
+    AUTH_ROLES_SYNC_AT_LOGIN = True
     OIDC_ISSUER = (os.environ.get("OIDC_ISSUER")
                    or "http://keycloak.localhost:8080/realms/dashboard")
     OAUTH_PROVIDERS = [{
@@ -146,9 +157,19 @@ if os.environ.get("AISC_OAUTH") == "1":
 
 
 # ---- register native comments/reviews: API + menu-accessible FAB views ----
-# The old in-page widget (DOM-injected via an nginx sidecar) is GONE -- it was
-# the one upgrade-fragile piece. Superset's own Flask-AppBuilder renders these
-# views, so there is zero coupling to Superset's React/DOM.
+# Superset's own Flask-AppBuilder renders these views, so nothing here depends
+# on Superset's React markup and an upgrade cannot break it.
+
+#: What the extension grants, by view, to Admin, Alpha, Gamma and the viewer
+#: role, so editors and viewers alike can use the Review page and its APIs.
+_EXTENSION_GRANTS = {
+    "CommentApi": ("can_list", "can_threads", "can_post", "can_delete"),
+    "AiscReviewView": ("can_list", "can_show"),
+    "Review dashboards": ("menu_access",),
+    "ReviewRequestApi": ("can_list", "can_post", "can_patch", "can_assignees"),
+}
+
+
 def FLASK_APP_MUTATOR(app):  # noqa: N802 (Superset hook name)
     # ---- one provider, so skip FAB's one-button login page ----
     # An anonymous GET of /login/ goes straight to the provider. With a session
@@ -179,45 +200,64 @@ def FLASK_APP_MUTATOR(app):  # noqa: N802 (Superset hook name)
         from aisc_ext.results_db import register_results_database
 
         register_results_database(app)
+        _install_extension(app)
 
-        from aisc_ext.comments.api import CommentApi
-        from aisc_ext.comments.model import AiscComment
-        from aisc_ext.comments.views import AiscCommentView
-        from aisc_ext.reviews.api import ReviewRequestApi
-        from aisc_ext.reviews.model import AiscReviewRequest
-        from aisc_ext.reviews.service import STAKEHOLDER_GROUPS
-        from aisc_ext.reviews.views import AiscReviewRequestView
-        from superset import db
-        sm = app.appbuilder.sm
-        try:
-            # --- REST APIs (for the embedding host / programmatic use) ---
-            app.appbuilder.add_api(CommentApi)
-            app.appbuilder.add_api(ReviewRequestApi)
-            # --- native menu-accessible CRUD surface (replaces the widget) ---
-            app.appbuilder.add_view(
-                AiscCommentView, "Comments", category="Assessment", icon="fa-comments")
-            app.appbuilder.add_view(
-                AiscReviewRequestView, "Review Requests", category="Assessment",
-                icon="fa-clipboard-check")
-            AiscComment.__table__.create(bind=db.engine, checkfirst=True)
-            AiscReviewRequest.__table__.create(bind=db.engine, checkfirst=True)
 
-            # --- grant API perms so editors+viewers can use them ---
-            grants = {
-                "CommentApi": ("can_list", "can_post", "can_delete"),
-                "ReviewRequestApi": ("can_list", "can_post", "can_patch", "can_assignees"),
-            }
-            for view, perms in grants.items():
-                for perm in perms:
-                    pvm = sm.add_permission_view_menu(perm, view)
-                    for role_name in ("Admin", "Alpha", "Gamma"):
-                        role = sm.find_role(role_name)
-                        if role and pvm and pvm not in role.permissions:
-                            role.permissions.append(pvm)
+def _install_extension(app):
+    """The extension's APIs, views, tables, grants and roles.
 
-            # --- stakeholder-group roles for review-request assignment ---
-            for g in STAKEHOLDER_GROUPS:
-                sm.add_role(g)
-            sm.get_session.commit()
-        except Exception as exc:  # don't block startup on this
-            app.logger.warning("AISC extension init skipped: %s", exc)
+    The modules are imported before the try on purpose: a module that does not
+    import is a broken deployment and should stop startup, while a failure
+    applying it to Superset's metadata should not."""
+    from aisc_ext.comments.api import CommentApi
+    from aisc_ext.project_bridge_api import ProjectBridgeApi
+    from aisc_ext.comments.model import AiscComment
+    from aisc_ext.comments.views import AiscCommentView
+    from aisc_ext.reviews.api import ReviewRequestApi
+    from aisc_ext.reviews.model import AiscReviewRequest
+    from aisc_ext.reviews.service import STAKEHOLDER_GROUPS
+    from aisc_ext.reviews.views import AiscReviewRequestView
+    from aisc_ext.review.views import AiscReviewView
+    from superset import db
+    appbuilder = app.appbuilder
+    sm = appbuilder.sm
+    try:
+        # REST APIs, for the Review page, the embedding host and the platform's
+        # bridge (which makes and removes a project's dashboard)
+        for api in (CommentApi, ProjectBridgeApi, ReviewRequestApi):
+            appbuilder.add_api(api)
+        # the Review page first: it is where people read and write comments
+        for view, name, icon in (
+            (AiscReviewView, "Review dashboards", "fa-comment-dots"),
+            (AiscCommentView, "Comments", "fa-comments"),
+            (AiscReviewRequestView, "Review Requests", "fa-clipboard-check"),
+        ):
+            appbuilder.add_view(view, name, category="Assessment", icon=icon)
+        for model in (AiscComment, AiscReviewRequest):
+            model.__table__.create(bind=db.engine, checkfirst=True)
+
+        # The viewer role, built from what Gamma holds minus the writing.
+        # Before the grants below, so it exists to receive them.
+        from aisc_ext.security import VIEWER_ROLE
+        from aisc_ext.viewer_role import ensure_viewer_role
+
+        ensure_viewer_role(sm, extra_writable_views=("AiscComment", "AiscReviewRequest"))
+        _grant(sm, _EXTENSION_GRANTS, ("Admin", "Alpha", "Gamma", VIEWER_ROLE))
+
+        # stakeholder-group roles for review-request assignment
+        for group in STAKEHOLDER_GROUPS:
+            sm.add_role(group)
+        sm.get_session.commit()
+    except Exception as exc:  # don't block startup on this
+        app.logger.warning("AISC extension init skipped: %s", exc)
+
+
+def _grant(sm, grants, role_names):
+    """Give each named role that exists every (permission, view) in grants."""
+    for view, perms in grants.items():
+        for perm in perms:
+            pvm = sm.add_permission_view_menu(perm, view)
+            for role_name in role_names:
+                role = sm.find_role(role_name)
+                if role and pvm and pvm not in role.permissions:
+                    role.permissions.append(pvm)

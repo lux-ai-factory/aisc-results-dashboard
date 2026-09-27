@@ -4,12 +4,20 @@
 
 Uses the verified Superset user as the author (never the request body), enforces
 delete = author-or-admin, and writes each action to the immudb audit ledger.
+
+Every route first asks Superset whether the caller may open the dashboard the
+comment is on, the same question Superset asks before drawing it: a person who
+cannot see a dashboard cannot read, write or delete its conversation either.
 Runtime-only (Flask/FAB/Superset imports)."""
 from flask import g, request
 from flask_appbuilder.api import BaseApi, expose, protect, safe
 
 from aisc_ext.audit import ImmudbClerk, clerk_kwargs_from_env
 from aisc_ext.comments.service import can_delete, make_comment
+from aisc_ext.dashboards import open_dashboard
+from aisc_ext.review.service import (
+    build_threads, chart_choices, chart_for_new_comment, charts_in_layout, reply_target,
+)
 
 _clerk = ImmudbClerk(**clerk_kwargs_from_env())
 
@@ -17,11 +25,78 @@ _clerk = ImmudbClerk(**clerk_kwargs_from_env())
 class CommentApi(BaseApi):
     resource_name = "aisc_comment"
     openapi_spec_tag = "AISC Comments"
+    # Flask-AppBuilder exempts its APIs from CSRF unless told otherwise, and
+    # Superset's own APIs do tell it (superset/views/base_api.py). This one is
+    # called with the session cookie from the Review page, and every tool of
+    # the platform is served from localhost, which a browser counts as one
+    # site: without the token, any of them could write here as the reader.
+    csrf_exempt = False
 
     def _user(self):
         u = g.user
         return (str(u.username), u.get_full_name() or u.username,
                 any(r.name == "Admin" for r in u.roles))
+
+    def _dashboard(self, id_or_slug):
+        """(dashboard, None) when the caller may open it, else (None, response)."""
+        if not id_or_slug:
+            return None, self.response_400(message="dashboard_id is required")
+        dashboard, status = open_dashboard(id_or_slug)
+        if status == 404:
+            return None, self.response_404()
+        if status == 403:
+            return None, self.response_403()
+        return dashboard, None
+
+    @staticmethod
+    def _charts(dashboard):
+        return charts_in_layout(dashboard.position_json,
+                                [(s.id, s.slice_name) for s in dashboard.slices])
+
+    def _placement(self, body, dashboard):
+        """Where a new comment goes, as ``{"parent_id", "chart_id"}``.
+
+        A reply goes to the top of its parent's thread; a new comment to a
+        chart of this dashboard, or to the whole dashboard. ValueError (or
+        TypeError, for a parent id that is not a number) when it cannot go
+        where the request asks."""
+        from aisc_ext.comments.model import AiscComment
+        from superset import db
+
+        if body.get("parent_id"):
+            parent = db.session.query(AiscComment).get(int(body["parent_id"]))
+            return reply_target(parent.to_dict() if parent else None,
+                                dashboard_id=str(dashboard.id))
+        return {"parent_id": None,
+                "chart_id": chart_for_new_comment(body.get("chart_id"), self._charts(dashboard))}
+
+    @expose("/threads", methods=["GET"])
+    @protect(allow_browser_login=True)
+    @safe
+    def threads(self):
+        """A dashboard's conversation, threaded, with what each comment can be about.
+        ---
+        get:
+          parameters:
+          - in: query
+            name: dashboard_id
+            schema: {type: string}
+        """
+        from aisc_ext.comments.model import AiscComment
+        from superset import db
+
+        dashboard, refused = self._dashboard(request.args.get("dashboard_id"))
+        if refused:
+            return refused
+        sub, _, is_admin = self._user()
+        rows = [r.to_dict() for r in db.session.query(AiscComment)
+                .filter(AiscComment.dashboard_id == str(dashboard.id)).all()]
+        charts = self._charts(dashboard)
+        return self.response(200, result={
+            "dashboard": {"id": dashboard.id, "title": dashboard.dashboard_title},
+            "charts": chart_choices(charts, rows),
+            "threads": build_threads(rows, charts, user_sub=sub, is_admin=is_admin),
+        })
 
     @expose("/", methods=["GET"])
     @protect(allow_browser_login=True)
@@ -44,8 +119,10 @@ class CommentApi(BaseApi):
         from aisc_ext.comments.model import AiscComment
         from superset import db
 
-        dash = request.args.get("dashboard_id")
-        q = db.session.query(AiscComment).filter(AiscComment.dashboard_id == dash)
+        dashboard, refused = self._dashboard(request.args.get("dashboard_id"))
+        if refused:
+            return refused
+        q = db.session.query(AiscComment).filter(AiscComment.dashboard_id == str(dashboard.id))
         if request.args.get("overall") == "true":
             q = q.filter(AiscComment.chart_id.is_(None))
         elif request.args.get("chart_id"):
@@ -62,11 +139,18 @@ class CommentApi(BaseApi):
 
         sub, name, _ = self._user()
         body = request.json or {}
-        data = make_comment(
-            dashboard_id=body["dashboard_id"], author_sub=sub, author_name=name,
-            body=body.get("body", ""), chart_id=body.get("chart_id"),
-            parent_id=body.get("parent_id"),
-        )
+        dashboard, refused = self._dashboard(body.get("dashboard_id"))
+        if refused:
+            return refused
+        try:
+            where = self._placement(body, dashboard)
+            data = make_comment(
+                dashboard_id=str(dashboard.id), author_sub=sub, author_name=name,
+                body=body.get("body", ""), chart_id=where["chart_id"],
+                parent_id=where["parent_id"],
+            )
+        except (ValueError, TypeError) as exc:
+            return self.response_400(message=str(exc))
         row = AiscComment(**{k: v for k, v in data.items() if k != "created_at"})
         db.session.add(row)
         db.session.commit()
@@ -86,6 +170,9 @@ class CommentApi(BaseApi):
         row = db.session.query(AiscComment).get(pk)
         if not row:
             return self.response_404()
+        _, refused = self._dashboard(row.dashboard_id)
+        if refused:
+            return refused
         if not can_delete(row.to_dict(), user_sub=sub, is_admin=is_admin):
             return self.response(403, message="Not your comment")
         db.session.delete(row)

@@ -1,0 +1,57 @@
+{% extends "aisc_review/_base.html" %}
+{% block title %}Review dashboards{% endblock %}
+{% block head %}
+<style>
+  main { max-width: 920px; width: 100%; margin: 0 auto; padding: 28px 16px; }
+  main h2 { font-size: 20px; margin: 0 0 4px; }
+  main p.lead { color: var(--muted); margin: 0 0 20px; }
+  ul.dashboards { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  ul.dashboards a.row {
+    display: flex; align-items: center; gap: 16px; padding: 14px 16px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    text-decoration: none; color: inherit;
+  }
+  ul.dashboards a.row:hover { border-color: var(--brand-soft); box-shadow: 0 1px 4px rgba(16,24,40,.06); }
+  .row .name { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .row .meta { color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .row .pill {
+    background: var(--mine); color: var(--brand); border-radius: 999px;
+    padding: 2px 10px; font-size: 12px; font-weight: 600; white-space: nowrap;
+  }
+  .row .pill.none { background: var(--bg); color: var(--muted); font-weight: 400; }
+  .empty {
+    background: var(--card); border: 1px dashed var(--line); border-radius: 8px;
+    padding: 32px; text-align: center; color: var(--muted);
+  }
+</style>
+{% endblock %}
+{% block crumbs %}<h1>Review</h1>{% endblock %}
+{% block actions %}<a class="btn" href="/dashboard/list/">All dashboards in Superset</a>{% endblock %}
+{% block body %}
+<main>
+  <h2>Pick a dashboard to review</h2>
+  <p class="lead">Each one opens with its conversation beside it. Comment on the whole dashboard or on one chart.</p>
+  {% if dashboards %}
+  <ul class="dashboards">
+    {% for d in dashboards %}
+    <li>
+      <a class="row" href="{{ url_for('AiscReviewView.show', id_or_slug=d.id) }}">
+        <span class="name">{{ d.title }}</span>
+        <span class="meta">{{ d.charts }} chart{{ '' if d.charts == 1 else 's' }}</span>
+        {% if d.comments %}
+        <span class="pill">{{ d.comments }} comment{{ '' if d.comments == 1 else 's' }}</span>
+        {% else %}
+        <span class="pill none">No comments yet</span>
+        {% endif %}
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <div class="empty">
+    There are no dashboards you can open yet.<br>
+    Once a dashboard is shared with you, it appears here.
+  </div>
+  {% endif %}
+</main>
+{% endblock %}

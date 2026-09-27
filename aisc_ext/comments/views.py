@@ -12,6 +12,11 @@ from aisc_ext.comments.model import AiscComment
 
 class AiscCommentView(ModelView):
     datamodel = SQLAInterface(AiscComment)
+    # Read-only. Comments are written on the Review page, through the API,
+    # which sets the author from the signed-in person and checks the dashboard
+    # and the chart. A form here would do neither: it has no author to save,
+    # and would let anyone holding can_edit rewrite what somebody else said.
+    base_permissions = ["can_list", "can_show"]
     list_columns = ["dashboard_id", "chart_id", "author_name", "body", "created_at"]
     show_columns = list_columns + ["parent_id", "author_sub"]
     search_columns = ["dashboard_id", "chart_id", "author_name"]

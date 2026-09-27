@@ -4,10 +4,13 @@
 
 dashboard-admin  -> Admin   (full)
 dashboard-editor -> Alpha   (create/edit charts & dashboards)
-dashboard-viewer -> Gamma   (view + comment)
-anything else    -> Gamma   (safe default; never elevate)
+dashboard-viewer -> AiscViewer (view + comment)
+anything else    -> AiscViewer (safe default; never elevate)
+
+The viewer used to be Gamma, which also holds can_write on Chart and Dashboard:
+every signed-in account could edit what everybody else reads. See tests/test_roles.py.
 """
-from aisc_ext.security import extract_realm_roles, map_keycloak_roles
+from aisc_ext.security import VIEWER_ROLE, extract_realm_roles, map_keycloak_roles
 
 
 def test_extract_realm_roles():
@@ -27,10 +30,10 @@ def test_admin_maps_to_admin():
     assert map_keycloak_roles(["dashboard-admin"]) == ["Admin"]
 
 
-def test_viewer_maps_to_gamma():
-    assert map_keycloak_roles(["dashboard-viewer"]) == ["Gamma"]
+def test_viewer_maps_to_the_viewer_role():
+    assert map_keycloak_roles(["dashboard-viewer"]) == [VIEWER_ROLE]
 
 
-def test_unknown_defaults_to_gamma_never_elevates():
-    assert map_keycloak_roles(["random-role"]) == ["Gamma"]
-    assert map_keycloak_roles([]) == ["Gamma"]
+def test_unknown_defaults_to_the_viewer_never_elevates():
+    assert map_keycloak_roles(["random-role"]) == [VIEWER_ROLE]
+    assert map_keycloak_roles([]) == [VIEWER_ROLE]
