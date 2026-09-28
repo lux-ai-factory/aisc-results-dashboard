@@ -128,6 +128,13 @@ def register_project(pid, slug: str, name: str, *, store, controls_password: str
         **tag,
         "title": name,
         "roles": [role],
+        # Superset's DashboardAccessFilter shows an unpublished dashboard to
+        # nobody but its owners and admins. This dashboard has no owners
+        # (S11.2/S11.3: DASHBOARD_RBAC and the project role decide who may see
+        # it), so it must be published or every member gets 0 dashboards.
+        # Unconditional, so a project registered before this existed heals on
+        # its next registration pass too.
+        "published": True,
         "charts": [
             {"kind": "line", "dataset": engine_ds, "by": "system_version", "metric": "score"},
             {"kind": "table", "dataset": controls_ds, "by": "system_version_number"},
@@ -321,6 +328,7 @@ class SupersetStore:
             session.add(found)
         found.dashboard_title = spec.get("title") or key
         found.json_metadata = json.dumps({PROJECT_TAG: spec[PROJECT_TAG]})
+        found.published = bool(spec.get("published"))
         found.roles = [r for r in (sm.find_role(name) for name in spec["roles"]) if r is not None]
         slices = []
         for chart in spec["charts"]:

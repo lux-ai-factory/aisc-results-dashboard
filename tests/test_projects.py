@@ -187,6 +187,29 @@ def test_s11_2_the_dashboard_is_for_the_project_role_and_has_both_charts(project
                and c["by"] == "system_version_number" for c in charts), charts
 
 
+def test_s13_dashboard_is_published_on_registration(projects):
+    """Controller ruling 13: an unpublished dashboard is invisible to every
+    non-admin member (Superset's DashboardAccessFilter requires
+    Dashboard.published), so register_project must publish it."""
+    store = FakeStore()
+    _register(projects, store)
+    dash = store.items("dashboard")[f"aisc-{HEX}"]
+    assert dash["published"] is True
+
+
+def test_s13_reregistering_heals_an_existing_unpublished_dashboard(projects):
+    """A project registered before this fix left published=False behind; the
+    next registration pass must heal it without anyone re-running anything by
+    hand."""
+    store = FakeStore()
+    store.objects["dashboard"][f"aisc-{HEX}"] = {
+        "aisc_project": PID, "title": "MCAS", "roles": [f"AiscProject_{HEX}"],
+        "charts": [], "published": False,
+    }
+    _register(projects, store)
+    assert store.items("dashboard")[f"aisc-{HEX}"]["published"] is True
+
+
 def test_s11_2_dashboard_rbac_is_switched_on():
     """S11.2 / S11.3: without DASHBOARD_RBAC, dashboard roles are ignored."""
     import pathlib
