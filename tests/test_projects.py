@@ -24,6 +24,8 @@ Rule ids are from docs/superpowers/pipeline-2026-09-23/03-specs.md.
 import copy
 import importlib
 import re
+import sys
+import types
 import uuid
 
 import pytest
@@ -197,17 +199,74 @@ def test_s13_dashboard_is_published_on_registration(projects):
     assert dash["published"] is True
 
 
-def test_s13_reregistering_heals_an_existing_unpublished_dashboard(projects):
-    """A project registered before this fix left published=False behind; the
-    next registration pass must heal it without anyone re-running anything by
-    hand."""
-    store = FakeStore()
-    store.objects["dashboard"][f"aisc-{HEX}"] = {
-        "aisc_project": PID, "title": "MCAS", "roles": [f"AiscProject_{HEX}"],
-        "charts": [], "published": False,
+def test_s13_supersetstore_publishes_an_existing_unpublished_dashboard_row(monkeypatch):
+    """A project registered before this fix left a real Superset Dashboard row
+    with published=False; the next registration pass must flip it to True in
+    place, keeping its id and its role, not replace the row. Exercises
+    SupersetStore._upsert_dashboard itself (the FakeStore used elsewhere is a
+    plain dict and can't show this: its upsert always replaces the whole spec,
+    so it can't tell "flipped in place" from "never set"), with a stand-in for
+    Superset's ORM, following the pattern of
+    test_isolation_dashboard.py::test_i10_1_supersetstore_keeps_the_dataset_id_when_it_moves."""
+    projects = importlib.import_module("aisc_ext.projects")
+
+    class Row:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+
+    role = Row(name=f"AiscProject_{HEX}")
+    dash = Row(id=9, slug=f"aisc-{HEX}", dashboard_title="old", json_metadata="{}",
+               published=False, roles=[], slices=[])
+    rows = {"Dashboard": [dash], "SqlaTable": [], "Slice": []}
+
+    class Query:
+        def __init__(self, items):
+            self.items = items
+
+        def filter_by(self, **kw):
+            return Query([i for i in self.items if all(getattr(i, k, None) == v for k, v in kw.items())])
+
+        def one_or_none(self):
+            return self.items[0] if self.items else None
+
+    class Session:
+        def query(self, model):
+            return Query(rows[model.__name__])
+
+        def add(self, obj):
+            rows["Dashboard"].append(obj)
+
+        def commit(self):
+            pass
+
+    class SecurityManager:
+        def find_role(self, name):
+            return role if name == role.name else None
+
+    Dashboard = type("Dashboard", (Row,), {})
+    Slice = type("Slice", (Row,), {})
+    SqlaTable = type("SqlaTable", (Row,), {})
+    fake = {
+        "superset": types.SimpleNamespace(db=types.SimpleNamespace(session=Session())),
+        "superset.models": types.ModuleType("superset.models"),
+        "superset.models.dashboard": types.SimpleNamespace(Dashboard=Dashboard),
+        "superset.models.slice": types.SimpleNamespace(Slice=Slice),
+        "superset.connectors": types.ModuleType("superset.connectors"),
+        "superset.connectors.sqla": types.ModuleType("superset.connectors.sqla"),
+        "superset.connectors.sqla.models": types.SimpleNamespace(SqlaTable=SqlaTable),
+        "flask": types.SimpleNamespace(
+            current_app=types.SimpleNamespace(appbuilder=types.SimpleNamespace(sm=SecurityManager()))),
     }
-    _register(projects, store)
-    assert store.items("dashboard")[f"aisc-{HEX}"]["published"] is True
+    for name, module in fake.items():
+        monkeypatch.setitem(sys.modules, name, module)
+
+    projects.SupersetStore().upsert("dashboard", f"aisc-{HEX}", {
+        "aisc_project": PID, "title": "MCAS", "roles": [role.name], "charts": [], "published": True,
+    })
+    assert len(rows["Dashboard"]) == 1
+    assert dash.id == 9
+    assert dash.published is True
+    assert dash.roles == [role]
 
 
 def test_s11_2_dashboard_rbac_is_switched_on():
