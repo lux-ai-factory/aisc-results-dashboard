@@ -7,7 +7,7 @@ AISC_DASHBOARD_TEST_PG_CONTAINER and started as
 
     docker run --rm -d --name aisc-t-dash-<hex> -p 127.0.0.1:<port>:5432 \
       -e POSTGRES_USER=aisc-postgres-user -e POSTGRES_PASSWORD=<pw> \
-      -e POSTGRES_DB=platform postgres:14-alpine
+      -e POSTGRES_DB=platform postgres:15-alpine
 
 The venv has no Postgres driver, so SQL goes through `docker exec psql` over
 the container's local socket (trust), connecting as the role named, which also
