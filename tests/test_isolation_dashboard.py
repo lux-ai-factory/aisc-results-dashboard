@@ -67,7 +67,8 @@ def test_i10_1_the_engine_sql_joins_project_system_and_never_core():
     sql = _flat(_engine_sql())
     assert "project.system" in sql
     assert "core." not in sql
-    for table in ("engine.measurement", "engine.observation", "engine.evaluation", "engine.metric"):
+    for table in ("engine.aisc_backend_measurement", "engine.aisc_backend_observation", "engine.aisc_backend_evaluation",
+                  "engine.aisc_backend_metric"):
         assert table in sql, table
     assert "s.number as system_version" in sql and "s.pid as system_version_pid" in sql
 

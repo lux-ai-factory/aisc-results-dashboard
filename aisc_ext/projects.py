@@ -49,10 +49,10 @@ _ENGINE_RESULTS_SQL = """
 SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
        e.pid AS evaluation_pid, e.created_at AS evaluated_at,
        s.pid AS system_version_pid, s.number AS system_version
-  FROM engine.measurement m
-  JOIN engine.observation o ON o.id = m.observation_id
-  JOIN engine.evaluation e ON e.id = o.evaluation_id
-  JOIN engine.metric met ON met.id = m.metric_id
+  FROM engine.aisc_backend_measurement m
+  JOIN engine.aisc_backend_observation o ON o.id = m.observation_id
+  JOIN engine.aisc_backend_evaluation e ON e.id = o.evaluation_id
+  JOIN engine.aisc_backend_metric met ON met.id = m.metric_id
   LEFT JOIN project.system s ON s.pid = e.system_id
 """
 

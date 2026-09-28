@@ -48,7 +48,7 @@ def setup():
     if project_db is None:
         sys.exit("no project connection in Superset: create a project on the platform first "
                  "(its bridge registers 'AISC Controls <slug>'), then re-run this check")
-    table = SqlaTable(table_name="measurement", schema="engine", database=project_db)
+    table = SqlaTable(table_name="aisc_backend_measurement", schema="engine", database=project_db)
     db.session.add(table)
     db.session.flush()
     second = Slice(slice_name=f"{TAG} second", viz_type="table", datasource_type="table",
@@ -104,7 +104,7 @@ def cleanup():
         for obj in db.session.query(model).filter(col.like(f"{TAG}%")):
             db.session.delete(obj)
     db.session.flush()
-    for t in db.session.query(SqlaTable).filter_by(table_name="measurement", schema="engine"):
+    for t in db.session.query(SqlaTable).filter_by(table_name="aisc_backend_measurement", schema="engine"):
         if not t.slices:
             db.session.delete(t)
     db.session.commit()

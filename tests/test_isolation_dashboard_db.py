@@ -79,12 +79,13 @@ INSERT INTO project.system (pid, number, name, version) VALUES ('{version}', 1, 
 RESET ROLE;
 SET ROLE engine_rw;
 SET search_path = engine;
-INSERT INTO project (pid, name, description, project_id) VALUES (gen_random_uuid(), 'X', '', '{pid}');
-INSERT INTO metric (pid, name) VALUES (gen_random_uuid(), 'accuracy');
-INSERT INTO evaluation (pid, status, project_id, system_id) SELECT gen_random_uuid(), 'Finished', id, '{version}' FROM project;
-INSERT INTO observation (pid, evaluation_id) SELECT gen_random_uuid(), id FROM evaluation;
-INSERT INTO measurement (pid, time, score, unit, metric_id, observation_id)
-  SELECT gen_random_uuid(), now(), {score}, 'ratio', (SELECT id FROM metric), id FROM observation;
+INSERT INTO aisc_backend_project (pid, name, description, project_id) VALUES (gen_random_uuid(), 'X', '', '{pid}');
+INSERT INTO aisc_backend_metric (pid, name) VALUES (gen_random_uuid(), 'accuracy');
+INSERT INTO aisc_backend_evaluation (pid, status, project_id, system_id)
+  SELECT gen_random_uuid(), 'Finished', id, '{version}' FROM aisc_backend_project;
+INSERT INTO aisc_backend_observation (pid, evaluation_id) SELECT gen_random_uuid(), id FROM aisc_backend_evaluation;
+INSERT INTO aisc_backend_measurement (pid, time, score, unit, metric_id, observation_id)
+  SELECT gen_random_uuid(), now(), {score}, 'ratio', (SELECT id FROM aisc_backend_metric), id FROM aisc_backend_observation;
 """, db=db)
 
 
@@ -132,8 +133,9 @@ def test_i16_5_the_engine_dataset_of_one_project_database_never_shows_another_pr
 
 def test_i10_3_dashboard_ro_cannot_write_the_engine_tables_of_a_project_database(made):
     made.need()
-    out = psql("SELECT has_table_privilege('engine.evaluation', 'INSERT'), "
-               "has_table_privilege('engine.evaluation', 'UPDATE'), has_table_privilege('engine.evaluation', 'SELECT');",
+    out = psql("SELECT has_table_privilege('engine.aisc_backend_evaluation', 'INSERT'), "
+               "has_table_privilege('engine.aisc_backend_evaluation', 'UPDATE'), "
+               "has_table_privilege('engine.aisc_backend_evaluation', 'SELECT');",
                db=DB, user="dashboard_ro", check=False)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "f|f|t"
