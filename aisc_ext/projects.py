@@ -15,7 +15,8 @@ For project P (hex = its pid without dashes) `register_project` makes, and
   stamp;
 - role ``AiscProject_<hex>``, which may read those two datasets and nothing else;
 - dashboard ``aisc-<hex>``, for that role only: a line of score by
-  system_version and a table of answers by system_version_number.
+  system_version, a table of answers by system_version_number and a bar of
+  the average score by target (target_label).
 
 The module decides what should exist and applies it through a store with three
 methods (``upsert``, ``delete``, ``items``). Superset backs it at runtime
@@ -45,15 +46,42 @@ PROJECT_TAG = "aisc_project"
 #: No trailing semicolon: callers may wrap or append.
 MEMBER_PROJECTS_SQL = "SELECT project_id FROM core.project_member WHERE subject = %(subject)s"
 
+#: Each measurement's target is its own plugin run's: an evaluation may run several plugins, each
+#: with its own inputs, and the engine names an observation's plugin only in ``tool``
+#: (``str(plugin)``, "<package>::<name> (v<version>)"), matched here in a nested join (one config
+#: and one plugin per run, so no row is repeated; and no WHERE, test_s11_4). The run's input named
+#: ``target`` points at a platform-kept mirror component, which target.target names
+#: (engine_component). Of pluginconfig only id and plugin_id are read: the readers may not see its
+#: config.
+#: target_status: 'unassigned' (the run has no ``target`` input, as every evaluation made before
+#: targets), 'not a target' (its component is no mirror), 'stale' (a component the latest card no
+#: longer lists), else 'current'. target_label is never NULL, so no chart shows an empty label.
 _ENGINE_RESULTS_SQL = """
 SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
        e.pid AS evaluation_pid, e.created_at AS evaluated_at,
-       s.pid AS system_version_pid, s.number AS system_version
+       s.pid AS system_version_pid, s.number AS system_version,
+       t.key AS target_key, t.kind AS target_kind, t.component_kind AS target_component_kind,
+       CASE WHEN ti.id IS NULL THEN 'unassigned'
+            WHEN t.key IS NULL THEN tc.name::text
+            ELSE t.label END AS target_label,
+       CASE WHEN ti.id IS NULL THEN 'unassigned'
+            WHEN t.key IS NULL THEN 'not a target'
+            WHEN t.kind = 'component'
+                 AND t.last_card_number < (SELECT max(number) FROM project.system) THEN 'stale'
+            ELSE 'current' END AS target_status
   FROM engine.aisc_backend_measurement m
   JOIN engine.aisc_backend_observation o ON o.id = m.observation_id
   JOIN engine.aisc_backend_evaluation e ON e.id = o.evaluation_id
   JOIN engine.aisc_backend_metric met ON met.id = m.metric_id
   LEFT JOIN project.system s ON s.pid = e.system_id
+  LEFT JOIN (engine.aisc_backend_evaluationplugin ep
+             JOIN engine.aisc_backend_pluginconfig pc ON pc.id = ep.plugin_config_id
+             JOIN engine.aisc_backend_plugin p ON p.id = pc.plugin_id)
+         ON ep.evaluation_id = e.id
+        AND o.tool = p.package_name || '::' || p.name || ' (v' || p.version || ')'
+  LEFT JOIN engine.aisc_backend_evaluationinput ti ON ti.evaluation_plugin_id = ep.id AND ti.name = 'target'
+  LEFT JOIN engine.aisc_backend_aicomponent tc ON tc.id = ti.component_id
+  LEFT JOIN target.target t ON t.engine_component = tc.pid
 """
 
 _CONTROLS_ANSWERS_SQL = """
@@ -75,6 +103,8 @@ ENGINE_RESULTS_COLUMNS = (
     ("pid", "STRING"), ("score", "FLOAT"), ("unit", "STRING"), ("time", "DATETIMETZ"),
     ("dimensions", "JSONB"), ("metric", "STRING"), ("evaluation_pid", "STRING"),
     ("evaluated_at", "DATETIMETZ"), ("system_version_pid", "STRING"), ("system_version", "INTEGER"),
+    ("target_key", "STRING"), ("target_kind", "STRING"), ("target_component_kind", "STRING"),
+    ("target_label", "STRING"), ("target_status", "STRING"),
 )
 CONTROLS_ANSWERS_COLUMNS = (
     ("title", "STRING"), ("text", "STRING"), ("answer", "STRING"), ("score", "INTEGER"),
@@ -157,6 +187,7 @@ def register_project(pid, slug: str, name: str, *, store, controls_password: str
         "charts": [
             {"kind": "line", "dataset": engine_ds, "by": "system_version", "metric": "score"},
             {"kind": "table", "dataset": controls_ds, "by": "system_version_number"},
+            {"kind": "bar", "dataset": engine_ds, "by": "target_label", "metric": "score"},
         ],
     })
 
@@ -185,9 +216,10 @@ def authorize_bridge(headers, env) -> int | None:
 
 def _chart_form(chart) -> tuple[str, dict]:
     """The Superset viz type and form data for one chart of a project dashboard:
-    a line of the average metric along ``by``, or a raw table of the answers."""
-    if chart["kind"] == "line":
-        return "echarts_timeseries_line", {
+    a line or a bar of the average metric along ``by`` (one series per metric), or a raw table of
+    the answers."""
+    if chart["kind"] in ("line", "bar"):
+        return f"echarts_timeseries_{chart['kind']}", {
             "x_axis": chart["by"],
             "metrics": [{"label": chart["metric"], "expressionType": "SIMPLE", "aggregate": "AVG",
                          "column": {"column_name": chart["metric"]}}],

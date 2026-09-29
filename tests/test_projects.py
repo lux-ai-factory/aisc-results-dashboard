@@ -189,6 +189,23 @@ def test_s11_2_the_dashboard_is_for_the_project_role_and_has_both_charts(project
                and c["by"] == "system_version_number" for c in charts), charts
 
 
+def test_targets_the_dashboard_has_an_average_score_by_target_bar(projects):
+    """Targets plan step 6: the average score of each metric by target, next to the two charts."""
+    store = FakeStore()
+    _register(projects, store)
+    charts = store.items("dashboard")[f"aisc-{HEX}"]["charts"]
+    assert {"kind": "bar", "dataset": f"engine_results_{HEX}", "by": "target_label", "metric": "score"} in charts
+    assert len(charts) == 3
+
+
+def test_targets_the_bar_chart_is_a_superset_bar_of_avg_score_by_target_per_metric(projects):
+    viz, form = projects._chart_form({"kind": "bar", "dataset": "d", "by": "target_label", "metric": "score"})
+    assert viz == "echarts_timeseries_bar"
+    assert form["x_axis"] == "target_label"
+    assert form["metrics"] == [{"label": "score", "expressionType": "SIMPLE", "aggregate": "AVG",
+                                "column": {"column_name": "score"}}]
+    assert form["groupby"] == ["metric"]
+
 def test_s13_dashboard_is_published_on_registration(projects):
     """Controller ruling 13: an unpublished dashboard is invisible to every
     non-admin member (Superset's DashboardAccessFilter requires

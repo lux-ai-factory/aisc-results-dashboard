@@ -32,7 +32,8 @@ def test_t1_both_datasets_are_registered_with_their_declared_columns(projects):
     store = FakeStore()
     _register(projects, store)
     assert _declared(store, ENGINE) == ["pid", "score", "unit", "time", "dimensions", "metric", "evaluation_pid",
-                                        "evaluated_at", "system_version_pid", "system_version"]
+                                        "evaluated_at", "system_version_pid", "system_version", "target_key",
+                                        "target_kind", "target_component_kind", "target_label", "target_status"]
     assert _declared(store, CONTROLS) == ["title", "text", "answer", "score", "system_version_number",
                                           "answered_at", "label", "submission_version"]
 
@@ -42,7 +43,9 @@ def test_t1_the_types_are_the_ones_superset_itself_infers():
     assert dict(p.ENGINE_RESULTS_COLUMNS) == {
         "pid": "STRING", "score": "FLOAT", "unit": "STRING", "time": "DATETIMETZ", "dimensions": "JSONB",
         "metric": "STRING", "evaluation_pid": "STRING", "evaluated_at": "DATETIMETZ",
-        "system_version_pid": "STRING", "system_version": "INTEGER"}
+        "system_version_pid": "STRING", "system_version": "INTEGER", "target_key": "STRING",
+        "target_kind": "STRING", "target_component_kind": "STRING", "target_label": "STRING",
+        "target_status": "STRING"}
     assert dict(p.CONTROLS_ANSWERS_COLUMNS) == {
         "title": "STRING", "text": "STRING", "answer": "STRING", "score": "INTEGER",
         "system_version_number": "INTEGER", "answered_at": "DATETIMETZ", "label": "STRING",
@@ -68,7 +71,7 @@ def test_t2_every_chart_column_is_declared_on_its_dataset(projects):
     store = FakeStore()
     _register(projects, store)
     charts = store.items("dashboard")[f"aisc-{HEX}"]["charts"]
-    assert charts
+    assert {c["kind"] for c in charts} == {"line", "table", "bar"}
     for chart in charts:
         _viz, form = p._chart_form(chart)
         missing = _chart_columns(form) - set(_declared(store, chart["dataset"]))
