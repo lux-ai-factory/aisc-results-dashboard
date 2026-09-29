@@ -66,6 +66,23 @@ SELECT c.title, q.text, a.answer, a.score, a.system_version_number, a.answered_a
 """
 
 
+#: The columns each dataset's SQL returns, in order, with the type Superset gives them (the strings
+#: its own inference produced on this stack, 2026-09-29). Declared rather than asked for: Superset
+#: finds a virtual dataset's columns by running the query with LIMIT 1 and reports none when the
+#: result is empty, and a project is registered before it has any row. Kept in step with the SQL by
+#: tests/test_project_datasets_db.py (T5).
+ENGINE_RESULTS_COLUMNS = (
+    ("pid", "STRING"), ("score", "FLOAT"), ("unit", "STRING"), ("time", "DATETIMETZ"),
+    ("dimensions", "JSONB"), ("metric", "STRING"), ("evaluation_pid", "STRING"),
+    ("evaluated_at", "DATETIMETZ"), ("system_version_pid", "STRING"), ("system_version", "INTEGER"),
+)
+CONTROLS_ANSWERS_COLUMNS = (
+    ("title", "STRING"), ("text", "STRING"), ("answer", "STRING"), ("score", "INTEGER"),
+    ("system_version_number", "INTEGER"), ("answered_at", "DATETIMETZ"), ("label", "STRING"),
+    ("submission_version", "INTEGER"),
+)
+
+
 def _pid(value) -> str:
     """A project pid as lowercase text; ValueError unless it is a uuid. It
     becomes part of a connection URI, a role and object names, so nothing else
@@ -117,8 +134,10 @@ def register_project(pid, slug: str, name: str, *, store, controls_password: str
     })
     # A dataset registered before the isolation sits on "AISC Results"; this
     # upsert moves it onto the project connection and keeps its id (I10.1).
-    store.upsert("dataset", engine_ds, {**tag, "database": database, "sql": engine_results_sql()})
-    store.upsert("dataset", controls_ds, {**tag, "database": database, "sql": controls_answers_sql()})
+    store.upsert("dataset", engine_ds, {**tag, "database": database, "sql": engine_results_sql(),
+                                        "columns": [list(c) for c in ENGINE_RESULTS_COLUMNS]})
+    store.upsert("dataset", controls_ds, {**tag, "database": database, "sql": controls_answers_sql(),
+                                          "columns": [list(c) for c in CONTROLS_ANSWERS_COLUMNS]})
     store.upsert("role", role, {**tag, "permissions": [
         ("datasource_access", engine_ds),
         ("datasource_access", controls_ds),
@@ -262,7 +281,30 @@ class SupersetStore:
         found.sql = spec["sql"]
         found.extra = json.dumps({PROJECT_TAG: spec[PROJECT_TAG]})
         session.flush()
-        found.fetch_metadata()
+        if spec.get("columns"):
+            self._sync_columns(found, spec["columns"])
+
+    @staticmethod
+    def _sync_columns(dataset, declared) -> None:
+        """Make the dataset's columns the declared ones, the way fetch_metadata would from a row:
+        a column already there keeps its object (and id), a new one is made, one no longer
+        declared goes, a calculated one (with an expression) stays. Never runs the query."""
+        from superset.connectors.sqla.models import TableColumn  # type: ignore
+
+        existing = {c.column_name: c for c in dataset.columns}
+        columns = []
+        for name, type_ in declared:
+            column = existing.get(name)
+            if column is None or column.expression:
+                column = TableColumn(column_name=name)
+            column.type, column.expression = type_, ""
+            column.is_dttm = type_.startswith("DATETIME")
+            column.groupby = column.filterable = True
+            columns.append(column)
+        declared_names = {name for name, _ in declared}
+        columns += [c for c in dataset.columns if c.expression and c.column_name not in declared_names]
+        dataset.columns = columns
+        dataset.main_dttm_col = next((c.column_name for c in columns if c.is_dttm), None)
 
     def _delete_dataset(self, key):
         from superset.connectors.sqla.models import SqlaTable  # type: ignore

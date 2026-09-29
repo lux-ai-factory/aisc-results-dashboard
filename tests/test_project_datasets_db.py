@@ -28,6 +28,7 @@ project's now live in its own database, where the engine dataset runs.
 import importlib
 import os
 import pathlib
+import re
 import subprocess
 import uuid
 
@@ -269,3 +270,39 @@ def test_s11_2_member_projects_sql_as_dashboard_ro(seeded, projects):
     assert [r[0] for r in _rows(out)] == [P]
     sql_none = projects.MEMBER_PROJECTS_SQL.replace("%(subject)s", "'nobody'").replace("%s", "'nobody'")
     assert _rows(psql(sql_none + ";", user="dashboard_ro")) == []
+
+
+# ── T5 (plan 2026-09-29): the declared columns are what the SQL returns ──────
+#: The Postgres type behind each Superset type the declarations use.
+_PG_OF_SUPERSET = {"STRING": {"text", "character varying", "uuid"}, "INTEGER": {"integer", "bigint"},
+                   "FLOAT": {"double precision"}, "DATETIMETZ": {"timestamp with time zone"},
+                   "JSONB": {"jsonb"}}
+
+
+def _result_columns(sql, db):
+    """The columns of a query, by name and Postgres type, in order: from a temporary view, so it
+    needs no row (the empty result is exactly where Superset's own probe gives none)."""
+    out = psql(f"CREATE TEMP VIEW t5 AS {sql};\n"
+               "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute "
+               "WHERE attrelid = 't5'::regclass AND attnum > 0 ORDER BY attnum;", db=db)
+    return [(name, re.sub(r"\(.*\)", "", pg)) for name, pg in _rows(out)]
+
+
+@pytest.mark.parametrize("which", ["engine", "controls"])
+def test_t5_the_declared_columns_are_the_columns_the_sql_returns(seeded, projects, which):
+    seeded.need("project")
+    sql = projects.engine_results_sql() if which == "engine" else projects.controls_answers_sql()
+    declared = projects.ENGINE_RESULTS_COLUMNS if which == "engine" else projects.CONTROLS_ANSWERS_COLUMNS
+    got = _result_columns(sql, seeded.db)
+    assert [n for n, _ in got] == [n for n, _ in declared]
+    for (name, pg), (_n, superset_type) in zip(got, declared):
+        assert pg in _PG_OF_SUPERSET[superset_type], f"{name}: {pg} is not a {superset_type}"
+
+
+def test_t5_it_holds_on_an_empty_project_too(seeded, projects):
+    """No row in either dataset: the columns are the same."""
+    seeded.need("project")
+    for sql, declared in ((projects.engine_results_sql(), projects.ENGINE_RESULTS_COLUMNS),
+                          (projects.controls_answers_sql(), projects.CONTROLS_ANSWERS_COLUMNS)):
+        got = _result_columns(f"SELECT * FROM ({sql}) s WHERE false", seeded.db)
+        assert [n for n, _ in got] == [n for n, _ in declared]
