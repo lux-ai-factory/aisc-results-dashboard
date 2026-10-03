@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import threading
 import uuid
 from datetime import datetime, timezone
 
@@ -52,6 +53,18 @@ def project_of(slug) -> str | None:
     if not m:
         return None
     return str(uuid.UUID(m.group(1)))
+
+
+def hint_problem(hint, slug) -> str | None:
+    """What is wrong with the request's witness hint (`?dashboard=<slug>`, which names the project to the
+    gateway's witness), for the dashboard actually written to; None when it may go on. No hint is no
+    problem: the event then cites a request filed in the platform log, and the relay says so (phase 9
+    review M4). A hint naming another dashboard is refused before anything is written."""
+    if hint is None:
+        return None
+    if project_of(slug) is None or hint != slug:
+        return "the dashboard named in the request is not the one written to"
+    return None
 
 
 def request_id(headers) -> str | None:
@@ -131,10 +144,27 @@ def emit(conn, project_pid: str | None, action: str, fields: dict) -> int | None
     return result.inserted_primary_key[0]
 
 
+#: The platform's answers that refuse the event itself: kept with the status, never sent again. Any other
+#: answer (a wrong token, an address that isn't the route, a platform down) is fixed by the operator, so
+#: the event waits for the next pass (phase 9 review M3).
+REFUSALS = (409, 413, 422)
+_PASS = threading.Lock()
+
+
 def deliver(engine, send, limit: int = 100) -> tuple[int, int]:
     """Post what is queued, oldest first: (sent, not sent). `send(pid, event)` returns the platform's status
-    (None: it can't be asked). 2xx: delivered. 5xx or no answer: kept, and the pass stops (order holds).
-    Any other status: a refusal, kept with its status and never sent again."""
+    (None: it can't be asked). 2xx: delivered. A refusal (REFUSALS): kept with its status, never sent again.
+    Anything else: kept, and the pass stops (the order holds). One pass at a time in this process, so two
+    request threads never send the same rows, or one comment's events out of order (review m9)."""
+    if not _PASS.acquire(blocking=False):
+        return 0, 0
+    try:
+        return _deliver(engine, send, limit)
+    finally:
+        _PASS.release()
+
+
+def _deliver(engine, send, limit: int) -> tuple[int, int]:
     sent = failed = 0
     with engine.connect() as conn:
         rows = conn.execute(select(OUTBOX).where(OUTBOX.c.delivered_at.is_(None), OUTBOX.c.refused.is_(None))
@@ -148,7 +178,9 @@ def deliver(engine, send, limit: int = 100) -> tuple[int, int]:
             sent += 1
             continue
         failed += 1
-        if status is None or status >= 500:
+        if status not in REFUSALS:
+            _log.warning("ledger: the platform answered %s for dashboard event %s; it stays queued",
+                         status, row.event.get("event_id"))
             break
         _log.error("ledger: the platform refused dashboard event %s (%s, status %s); kept, not sent again",
                    row.event.get("event_id"), row.event.get("action"), status)

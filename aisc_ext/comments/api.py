@@ -78,6 +78,8 @@ class CommentApi(BaseApi):
 
         if body.get("parent_id"):
             parent = db.session.query(AiscComment).get(int(body["parent_id"]))
+            if parent is not None and parent.deleted_at is not None:
+                parent = None                                           # no reply under a hidden comment
             return reply_target(parent.to_dict() if parent else None,
                                 dashboard_id=str(dashboard.id))
         return {"parent_id": None,
@@ -156,6 +158,8 @@ class CommentApi(BaseApi):
         dashboard, refused = self._dashboard(body.get("dashboard_id"))
         if refused:
             return refused
+        if (problem := ledger.hint_problem(request.args.get("dashboard"), dashboard.slug)) is not None:
+            return self.response_400(message=problem)
         try:
             where = self._placement(body, dashboard)
             data = make_comment(
@@ -193,6 +197,8 @@ class CommentApi(BaseApi):
         dashboard, refused = self._dashboard(row.dashboard_id)
         if refused:
             return refused
+        if (problem := ledger.hint_problem(request.args.get("dashboard"), dashboard.slug)) is not None:
+            return self.response_400(message=problem)
         if not can_delete(row.to_dict(), user_sub=sub, is_admin=is_admin):
             return self.response(403, message="Not your comment")
         from datetime import datetime, timezone

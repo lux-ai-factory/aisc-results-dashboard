@@ -13,6 +13,7 @@ Every customization rides an official Superset config seam:
   - comments/reviews  -> FLASK_APP_MUTATOR (API + native FAB views)
   - interactive embed -> FEATURE_FLAGS + Talisman frame-ancestors
 """
+import logging
 import os
 
 from aisc_ext import branding
@@ -241,9 +242,14 @@ def _install_extension(app):
 
         from aisc_ext import ledger
 
-        with db.engine.begin() as conn:
-            conn.execute(text("ALTER TABLE aisc_comment ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP"))
-        ledger.OUTBOX.metadata.create_all(db.engine)
+        # idempotent on Postgres; two workers starting at once may still race, which leaves the first one's
+        # work in place, so a failure here is logged and startup goes on (phase 9 review m10)
+        try:
+            with db.engine.begin() as conn:
+                conn.execute(text("ALTER TABLE aisc_comment ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP"))
+            ledger.OUTBOX.metadata.create_all(db.engine)
+        except Exception:                                               # noqa: BLE001
+            logging.getLogger(__name__).exception("ledger: the comment column or the outbox was not made here")
 
         # The viewer role, built from what Gamma holds minus the writing.
         # Before the grants below, so it exists to receive them.

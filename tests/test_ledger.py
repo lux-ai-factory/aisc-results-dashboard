@@ -162,3 +162,46 @@ def test_without_a_token_nothing_is_sent(monkeypatch):
 def test_only_the_dashboards_actions_are_built():
     with pytest.raises(ValueError):
         ledger.event("project.deleted", {})
+
+
+@pytest.mark.parametrize("status", [None, 301, 302, 401, 403, 404, 500, 502, 503])
+def test_m3_review_a_fixable_answer_keeps_the_event_for_the_next_pass(engine, status):
+    """A wrong token, an address that isn't the platform's route, a platform down: fixed by the operator, then
+    sent. Kept, and the pass stops there so the order holds."""
+    with engine.begin() as conn:
+        for _ in range(2):
+            ledger.emit(conn, PID, "dashboard.comment.created", ledger.comment_created(COMMENT, slug=SLUG, request=REQUEST))
+    tried = []
+    assert ledger.deliver(engine, lambda pid, event: tried.append(1) or status) == (0, 1)
+    assert len(tried) == 1
+    assert ledger.deliver(engine, lambda pid, event: 202) == (2, 0)
+
+
+@pytest.mark.parametrize("status", [409, 413, 422])
+def test_m3_review_only_the_platforms_refusals_are_final(engine, status):
+    with engine.begin() as conn:
+        ledger.emit(conn, PID, "dashboard.comment.created", ledger.comment_created(COMMENT, slug=SLUG, request=REQUEST))
+    assert ledger.deliver(engine, lambda pid, event: status) == (0, 1)
+    assert ledger.deliver(engine, lambda pid, event: pytest.fail("sent again")) == (0, 0)
+
+
+def test_m4_review_the_witness_hint_must_name_the_dashboard_written_to():
+    """The Review page names the dashboard by its slug for the gateway's witness; a hint naming another
+    dashboard is refused before anything is written, so no event can cite another project's request."""
+    assert ledger.hint_problem(None, SLUG) is None                      # no hint: the event just goes unwitnessed
+    assert ledger.hint_problem(SLUG, SLUG) is None
+    assert ledger.hint_problem("aisc-" + "1" * 32, SLUG) is not None
+    assert ledger.hint_problem(SLUG, "sales") is not None
+
+
+def test_m9_review_one_pass_at_a_time(engine):
+    """Two request threads never send the same rows, or one comment's events out of order."""
+    with engine.begin() as conn:
+        ledger.emit(conn, PID, "dashboard.comment.created", ledger.comment_created(COMMENT, slug=SLUG, request=REQUEST))
+    inner = []
+
+    def send(pid, event):
+        inner.append(ledger.deliver(engine, lambda *a: pytest.fail("a second pass ran at once")))
+        return 202
+    assert ledger.deliver(engine, send) == (1, 0)
+    assert inner == [(0, 0)]

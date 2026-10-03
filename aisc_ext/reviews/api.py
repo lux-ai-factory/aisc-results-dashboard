@@ -82,10 +82,12 @@ class ReviewRequestApi(BaseApi):
             assignee_user_sub=b.get("assignee_user_sub"),
             assignee_category=b.get("assignee_category"), chart_id=b.get("chart_id"),
         )
+        slug = _slug_of(data["dashboard_id"])
+        if (problem := ledger.hint_problem(request.args.get("dashboard"), slug)) is not None:
+            return self.response_400(message=problem)
         row = AiscReviewRequest(**{k: v for k, v in data.items() if k != "created_at"})
         db.session.add(row)
         db.session.flush()                                              # its id, for its ledger event
-        slug = _slug_of(row.dashboard_id)
         ledger.emit(db.session.connection(), ledger.project_of(slug), "dashboard.review.requested",
                     ledger.review_requested(row.to_dict(), slug=slug, request=ledger.request_id(request.headers)))
         db.session.commit()
@@ -103,16 +105,19 @@ class ReviewRequestApi(BaseApi):
         from superset import db
         from datetime import datetime, timezone
         sub, name, groups, is_admin = _user()
-        row = db.session.query(AiscReviewRequest).get(pk)
+        # locked: its status before is the one this resolution replaces (phase 9 review m2)
+        row = db.session.query(AiscReviewRequest).filter(AiscReviewRequest.id == pk).with_for_update().one_or_none()
         if not row:
             return self.response_404()
         if not can_resolve(row.to_dict(), user_sub=sub, user_groups=groups, is_admin=is_admin):
             return self.response(403, message="Not allowed to resolve this request")
         action = (request.json or {}).get("action", "done")
+        slug = _slug_of(row.dashboard_id)
+        if (problem := ledger.hint_problem(request.args.get("dashboard"), slug)) is not None:
+            return self.response_400(message=problem)
         status_before = row.status or "open"
         row.status = "dismissed" if action == "dismiss" else "done"
         row.resolved_at = datetime.now(timezone.utc); row.resolved_by = name
-        slug = _slug_of(row.dashboard_id)
         ledger.emit(db.session.connection(), ledger.project_of(slug), "dashboard.review.resolved",
                     ledger.review_resolved(row.to_dict(), status_before=status_before, slug=slug,
                                               request=ledger.request_id(request.headers)))

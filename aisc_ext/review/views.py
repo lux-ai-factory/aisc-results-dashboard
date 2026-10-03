@@ -45,6 +45,7 @@ class AiscReviewView(BaseView):
         dashboards = sorted(DashboardDAO.find_all(),
                             key=lambda d: (d.dashboard_title or "").lower())
         counts = dict(db.session.query(AiscComment.dashboard_id, func.count(AiscComment.id))
+                      .filter(AiscComment.deleted_at.is_(None))            # a deleted comment is hidden
                       .group_by(AiscComment.dashboard_id).all())
         rows = [{"id": d.id, "title": d.dashboard_title or f"Dashboard {d.id}",
                  "charts": len(d.slices), "comments": counts.get(str(d.id), 0),
