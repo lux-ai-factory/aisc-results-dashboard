@@ -68,7 +68,8 @@ SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
             WHEN t.key IS NULL THEN 'not a target'
             WHEN t.kind = 'component'
                  AND t.last_card_number < (SELECT max(number) FROM project.system) THEN 'stale'
-            ELSE 'current' END AS target_status
+            ELSE 'current' END AS target_status,
+       COALESCE(p.display_name, p.name, 'unknown') AS tool
   FROM engine.aisc_backend_measurement m
   JOIN engine.aisc_backend_observation o ON o.id = m.observation_id
   JOIN engine.aisc_backend_evaluation e ON e.id = o.evaluation_id
@@ -104,7 +105,7 @@ ENGINE_RESULTS_COLUMNS = (
     ("dimensions", "JSONB"), ("metric", "STRING"), ("evaluation_pid", "STRING"),
     ("evaluated_at", "DATETIMETZ"), ("system_version_pid", "STRING"), ("system_version", "INTEGER"),
     ("target_key", "STRING"), ("target_kind", "STRING"), ("target_component_kind", "STRING"),
-    ("target_label", "STRING"), ("target_status", "STRING"),
+    ("target_label", "STRING"), ("target_status", "STRING"), ("tool", "STRING"),
 )
 CONTROLS_ANSWERS_COLUMNS = (
     ("title", "STRING"), ("text", "STRING"), ("answer", "STRING"), ("score", "INTEGER"),
@@ -184,6 +185,12 @@ def register_project(pid, slug: str, name: str, *, store, controls_password: str
         # Unconditional, so a project registered before this existed heals on
         # its next registration pass too.
         "published": True,
+        # results navigation (2026-10-03): the launcher's buttons open this dashboard with these
+        # set, by their fixed ids (docs/superpowers/results-nav-2026-10-03/01-specs.md R1.2)
+        "filters": [
+            {"id": "NATIVE_FILTER-target", "name": "Target", "dataset": engine_ds, "column": "target_label"},
+            {"id": "NATIVE_FILTER-tool", "name": "Tool", "dataset": engine_ds, "column": "tool"},
+        ],
         "charts": [
             {"kind": "line", "dataset": engine_ds, "by": "system_version", "metric": "score"},
             {"kind": "table", "dataset": controls_ds, "by": "system_version_number"},
@@ -212,6 +219,21 @@ def authorize_bridge(headers, env) -> int | None:
     if not expected or not hmac.compare_digest(given, expected):
         return 401
     return None
+
+
+def native_filter(spec: dict, *, dataset_id: int, excluded: list) -> dict:
+    """One single-select dashboard filter on a column of a dataset, in the shape Superset writes a
+    `filter_select` itself (superset/migrations/shared/native_filters.py), with no default value;
+    `excluded` are the charts it does not apply to."""
+    return {
+        "id": spec["id"], "name": spec["name"], "type": "NATIVE_FILTER", "filterType": "filter_select",
+        "targets": [{"datasetId": dataset_id, "column": {"name": spec["column"]}}],
+        "controlValues": {"enableEmptyFilter": False, "defaultToFirstItem": False, "multiSelect": False,
+                          "searchAllOptions": False, "inverseSelection": False},
+        "defaultDataMask": {"extraFormData": {}, "filterState": {}, "ownState": {}},
+        "cascadeParentIds": [], "scope": {"rootPath": ["ROOT_ID"], "excluded": list(excluded)},
+        "description": "",
+    }
 
 
 def _chart_form(chart) -> tuple[str, dict]:
@@ -401,7 +423,6 @@ class SupersetStore:
             found = Dashboard(slug=key)
             session.add(found)
         found.dashboard_title = spec.get("title") or key
-        found.json_metadata = json.dumps({PROJECT_TAG: spec[PROJECT_TAG]})
         found.published = bool(spec.get("published"))
         found.roles = [r for r in (sm.find_role(name) for name in spec["roles"]) if r is not None]
         slices = []
@@ -418,6 +439,16 @@ class SupersetStore:
             session.add(piece)
             slices.append(piece)
         found.slices = slices
+        if hasattr(session, "flush"):
+            session.flush()                 # a new chart gets its id, which a filter's scope names
+        natives = []
+        for f in spec.get("filters", []):
+            table = session.query(SqlaTable).filter_by(table_name=f["dataset"]).one_or_none()
+            if table is None:
+                continue
+            excluded = [s.id for s in slices if s.datasource_id != table.id]
+            natives.append(native_filter(f, dataset_id=table.id, excluded=excluded))
+        found.json_metadata = json.dumps({PROJECT_TAG: spec[PROJECT_TAG], "native_filter_configuration": natives})
 
     def _delete_dashboard(self, key):
         from superset.models.dashboard import Dashboard  # type: ignore

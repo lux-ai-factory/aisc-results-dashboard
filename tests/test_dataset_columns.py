@@ -33,7 +33,8 @@ def test_t1_both_datasets_are_registered_with_their_declared_columns(projects):
     _register(projects, store)
     assert _declared(store, ENGINE) == ["pid", "score", "unit", "time", "dimensions", "metric", "evaluation_pid",
                                         "evaluated_at", "system_version_pid", "system_version", "target_key",
-                                        "target_kind", "target_component_kind", "target_label", "target_status"]
+                                        "target_kind", "target_component_kind", "target_label", "target_status",
+                                        "tool"]
     assert _declared(store, CONTROLS) == ["title", "text", "answer", "score", "system_version_number",
                                           "answered_at", "label", "submission_version"]
 
@@ -45,7 +46,7 @@ def test_t1_the_types_are_the_ones_superset_itself_infers():
         "metric": "STRING", "evaluation_pid": "STRING", "evaluated_at": "DATETIMETZ",
         "system_version_pid": "STRING", "system_version": "INTEGER", "target_key": "STRING",
         "target_kind": "STRING", "target_component_kind": "STRING", "target_label": "STRING",
-        "target_status": "STRING"}
+        "target_status": "STRING", "tool": "STRING"}   # tool: results navigation 2026-10-03
     assert dict(p.CONTROLS_ANSWERS_COLUMNS) == {
         "title": "STRING", "text": "STRING", "answer": "STRING", "score": "INTEGER",
         "system_version_number": "INTEGER", "answered_at": "DATETIMETZ", "label": "STRING",
