@@ -1,7 +1,9 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Native REST API for review requests, /api/v1/aisc_review_request.
-Runtime-only (Flask/FAB/Superset). Audited to immudb."""
+"""REST API for review requests, under /api/v1/aisc_review_request.
+
+Each action is written to the immudb audit log and, when LEDGER_MODE is on,
+queued as a ledger event. Imported only inside Superset."""
 from flask import g, request
 from flask_appbuilder.api import BaseApi, expose, protect, safe
 
@@ -16,7 +18,7 @@ _clerk = ImmudbClerk(**clerk_kwargs_from_env())
 
 
 def _slug_of(dashboard_id) -> str | None:
-    """The slug of the dashboard a review request names (its id or slug), for its ledger event."""
+    """The slug of the dashboard a review request names by id or slug, for its ledger event."""
     from superset import db
     from superset.models.dashboard import Dashboard  # type: ignore
 
@@ -42,7 +44,7 @@ class ReviewRequestApi(BaseApi):
     @protect(allow_browser_login=True)
     @safe
     def assignees(self):
-        """Who can a review be assigned to: known users + stakeholder categories."""
+        """Who a review can be assigned to: the known users and the stakeholder groups."""
         from superset import db
         from flask_appbuilder.security.sqla.models import User
         users = [{"sub": u.username, "name": u.get_full_name() or u.username}
@@ -53,7 +55,7 @@ class ReviewRequestApi(BaseApi):
     @protect(allow_browser_login=True)
     @safe
     def list(self):
-        """List requests. ?assignee=me  ?dashboard_id=  ?status=open"""
+        """List review requests, filtered by ?assignee=me, ?dashboard_id= and ?status=."""
         from aisc_ext.reviews.model import AiscReviewRequest
         from superset import db
         sub, _, groups, _ = _user()
@@ -87,7 +89,7 @@ class ReviewRequestApi(BaseApi):
             return self.response_400(message=problem)
         row = AiscReviewRequest(**{k: v for k, v in data.items() if k != "created_at"})
         db.session.add(row)
-        db.session.flush()                                              # its id, for its ledger event
+        db.session.flush()                                              # gives the row its id, for the event
         ledger.emit(db.session.connection(), ledger.project_of(slug), "dashboard.review.requested",
                     ledger.review_requested(row.to_dict(), slug=slug, request=ledger.request_id(request.headers)))
         db.session.commit()
@@ -105,7 +107,8 @@ class ReviewRequestApi(BaseApi):
         from superset import db
         from datetime import datetime, timezone
         sub, name, groups, is_admin = _user()
-        # locked: its status before is the one this resolution replaces (phase 9 review m2)
+        # Locked, so the status read here is the one this resolution replaces,
+        # even when two people resolve the same request at once.
         row = db.session.query(AiscReviewRequest).filter(AiscReviewRequest.id == pk).with_for_update().one_or_none()
         if not row:
             return self.response_404()

@@ -1,18 +1,18 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Build the viewer role inside Superset, from what Gamma actually holds.
+"""Build the viewer role inside Superset from the permissions Gamma holds.
 
-Kept apart from `security.py`, which stays free of Superset imports so it can
-be unit-tested without the app. The decision about which permissions a viewer
-keeps is there; this is the part that talks to Flask-AppBuilder.
+Which permissions a viewer keeps is decided in `security.py`, which has no
+Superset imports so it can be unit-tested without the app. This module applies
+that decision through Flask-AppBuilder.
 """
 from __future__ import annotations
 
 from aisc_ext.security import VIEWER_ROLE, viewer_permissions_from
 
-#: The role the viewer is derived from. Gamma is Superset's own "can look at
-#: what has been shared with me", which is the right starting point; what it
-#: also holds, and should not, is can_write on Chart and Dashboard.
+#: The role the viewer is derived from. Gamma is Superset's role for "can see
+#: what has been shared with me", but it also holds can_write on Chart and
+#: Dashboard, which the viewer must not.
 DERIVED_FROM = "Gamma"
 
 
@@ -25,11 +25,11 @@ def pairs_of(role) -> list[tuple[str, str]]:
 
 
 def ensure_viewer_role(sm, extra_writable_views=()) -> object | None:
-    """Create or refresh AiscViewer. Returns the role.
+    """Create or refresh the AiscViewer role and return it (None without Gamma).
 
-    Refreshed on every start rather than created once, so a Superset upgrade
-    that adds permissions to Gamma does not silently add them here too, and one
-    that renames them does not leave the viewer holding nothing.
+    It is refreshed at every start, not created once, so it follows Superset
+    upgrades: permissions added to Gamma still go through the viewer filter, and
+    renamed ones are picked up instead of leaving the viewer with nothing.
     """
     source = sm.find_role(DERIVED_FROM)
     if source is None:

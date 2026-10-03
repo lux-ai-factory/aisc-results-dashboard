@@ -1,21 +1,22 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""The dashboard's ledger events (ledger phase 9, D1-D2; docs/superpowers/ledger-2026-10-02/02-spec.md).
+"""Ledger events for dashboard comments and review requests.
 
-A project's dashboard is ``aisc-<pid hex>`` (aisc_ext.projects): its slug names the project, so an event
-of a comment or a review finds its project log from the dashboard it is on. The gateway's witness reads
-the same slug from the request (in the path, or in ``dashboard_id=``), which is why the Review page names
-the dashboard by its slug in every call that writes.
+A project's dashboard has the slug ``aisc-<pid hex>`` (aisc_ext.projects), so the event of a comment or a
+review finds its project's ledger from the dashboard it is on. The gateway's witness reads the same slug
+from the request (in the path, or in ``dashboard_id=``), which is why the Review page names the dashboard
+by its slug in every call that writes.
 
-Superset's metadata is not a project database and has no ``ledger.emit``. The extension keeps its own
-outbox there (``aisc_ledger_outbox``): ``emit`` writes the event on the connection of the change, in
-its transaction, so the two commit or roll back together (R2.4). ``deliver`` posts what is queued to the
-platform's internal route with the dashboard's token, in order, once each: a refusal is kept with its
-status and not sent again; a platform that doesn't answer leaves the row queued for the next pass.
+Superset's metadata database is not a project database and has no ``ledger.emit``, so the extension keeps
+its own outbox table there (``aisc_ledger_outbox``). ``emit`` writes the event on the connection of the
+change, in its transaction, so the two commit or roll back together. ``deliver`` posts the queued events
+to the platform's internal ledger route with the dashboard's token, in order, once each. An event the
+platform refuses is kept with its status and not sent again; when the platform does not answer, the event
+stays queued for the next pass.
 
-An event never names who acted (I2): the witnessed request it cites does. A review's assignee is said as
-its kind (``user``) or its group (``category:legal``), never as a person. Nothing is queued while
-LEDGER_MODE is off (the default). Pure: no Superset import, so it unit-tests on SQLite.
+An event never names who acted: the witnessed request it cites does. A review's assignee is given as its
+kind (``user``) or its group (``category:legal``), never as a person. Nothing is queued while LEDGER_MODE
+is off (the default). The module imports nothing from Superset, so it is unit-tested on SQLite.
 """
 from __future__ import annotations
 
@@ -39,7 +40,7 @@ OUTBOX = Table(
     Column("event", JSON, nullable=False),
     Column("queued_at", DateTime(timezone=True), nullable=False),
     Column("delivered_at", DateTime(timezone=True), nullable=True),
-    Column("refused", Integer, nullable=True),            # the platform's status when it refused the event
+    Column("refused", Integer, nullable=True),            # the HTTP status of the platform's refusal
 )
 
 
@@ -56,10 +57,12 @@ def project_of(slug) -> str | None:
 
 
 def hint_problem(hint, slug) -> str | None:
-    """What is wrong with the request's witness hint (`?dashboard=<slug>`, which names the project to the
-    gateway's witness), for the dashboard actually written to; None when it may go on. No hint is no
-    problem: the event then cites a request filed in the platform log, and the relay says so (phase 9
-    review M4). A hint naming another dashboard is refused before anything is written."""
+    """Check the request's witness hint against the dashboard actually written to.
+
+    The hint (`?dashboard=<slug>`) names the project to the gateway's witness. Returns a message when the
+    hint names another dashboard, so the request is refused before anything is written; None otherwise.
+    A missing hint is allowed: the event then cites a request filed in the platform log, and the relay
+    records that."""
     if hint is None:
         return None
     if project_of(slug) is None or hint != slug:
@@ -68,7 +71,7 @@ def hint_problem(hint, slug) -> str | None:
 
 
 def request_id(headers) -> str | None:
-    """The request the gateway witnessed (X-AISC-Request-Id), only when it is a uuid."""
+    """The id of the request the gateway witnessed (X-AISC-Request-Id), or None unless it is a UUID."""
     presented = headers.get("X-AISC-Request-Id") if headers is not None else None
     try:
         return str(uuid.UUID(presented)) if presented else None
@@ -88,7 +91,7 @@ def _fields(item_type, item_id, request, **fields) -> dict:
 
 
 def event(action: str, fields: dict) -> dict:
-    """The whole event the platform's internal route takes: a new event id, the action, the fields."""
+    """The event body the platform's internal route takes: a new event id, the action, the fields."""
     if action not in ACTIONS:
         raise ValueError(f"not a dashboard action: {action!r}")
     return {"event_id": str(uuid.uuid4()), "action": action, **fields}
@@ -135,8 +138,10 @@ def review_resolved(row: dict, *, status_before: str, slug: str, request: str | 
 
 
 def emit(conn, project_pid: str | None, action: str, fields: dict) -> int | None:
-    """Queue the event on `conn`, inside the change's own transaction. None while the ledger is off, or for
-    a dashboard of no project (Superset's own, an example): there is no project log to write to."""
+    """Queue the event on `conn`, inside the change's own transaction, and return the outbox row id.
+
+    Returns None while the ledger is off, or for a dashboard that belongs to no project (an example
+    dashboard, say): there is no project ledger to write to."""
     if not on() or project_pid is None:
         return None
     result = conn.execute(OUTBOX.insert().values(project_pid=project_pid, event=event(action, fields),
@@ -144,18 +149,21 @@ def emit(conn, project_pid: str | None, action: str, fields: dict) -> int | None
     return result.inserted_primary_key[0]
 
 
-#: The platform's answers that refuse the event itself: kept with the status, never sent again. Any other
-#: answer (a wrong token, an address that isn't the route, a platform down) is fixed by the operator, so
-#: the event waits for the next pass (phase 9 review M3).
+#: The platform's statuses that refuse the event itself: the event is kept with the status and never sent
+#: again. Any other failure (a wrong token, a wrong address, the platform down) is for the operator to fix,
+#: so the event waits for the next pass.
 REFUSALS = (409, 413, 422)
 _PASS = threading.Lock()
 
 
 def deliver(engine, send, limit: int = 100) -> tuple[int, int]:
-    """Post what is queued, oldest first: (sent, not sent). `send(pid, event)` returns the platform's status
-    (None: it can't be asked). 2xx: delivered. A refusal (REFUSALS): kept with its status, never sent again.
-    Anything else: kept, and the pass stops (the order holds). One pass at a time in this process, so two
-    request threads never send the same rows, or one comment's events out of order (review m9)."""
+    """Post the queued events, oldest first, and return (sent, not sent).
+
+    `send(pid, event)` returns the platform's HTTP status, or None when the platform cannot be asked. A 2xx
+    marks the event delivered. A status in REFUSALS keeps the event with that status, never sent again.
+    Anything else keeps the event queued and stops the pass, so the order holds. Only one pass runs at a
+    time in this process, so two request threads never send the same rows, or one comment's events out of
+    order."""
     if not _PASS.acquire(blocking=False):
         return 0, 0
     try:
@@ -190,8 +198,10 @@ def _deliver(engine, send, limit: int) -> tuple[int, int]:
 
 
 def http_sender(post=None):
-    """`send` for `deliver`: the platform's internal route, with the dashboard's token
-    (PLATFORM_LEDGER_DASHBOARD_TOKEN). None when the token or the platform's address is not set."""
+    """A `send` function for `deliver` that posts to the platform's internal ledger route.
+
+    It authenticates with PLATFORM_LEDGER_DASHBOARD_TOKEN and returns None (event stays queued) when that
+    token or PLATFORM_URL is not set."""
     if post is None:
         import requests
 

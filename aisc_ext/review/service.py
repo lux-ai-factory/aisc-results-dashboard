@@ -1,15 +1,14 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""What the Review page shows: a dashboard, and its conversation beside it.
+"""What the Review page shows: a dashboard, with its comments beside it.
 
-Pure: no Superset, Flask or database imports, so it unit-tests on its own. The
-comments API hands it rows as the model's ``to_dict`` gives them, and the charts
-of the dashboard as ``(id, name)`` pairs in the order the dashboard lists them;
-the view (aisc_ext.review.views) takes the frame address from here.
+No Superset, Flask or database imports, so it is unit-tested on its own. The
+comments API passes it rows as the model's ``to_dict`` returns them, and the
+dashboard's charts as ``(id, name)`` pairs in the dashboard's order; the view
+(aisc_ext.review.views) takes the frame address from here.
 
-Threads are one level deep. A reply to a reply joins the thread it is in,
-which is how people read a side conversation anyway, and it keeps the page a
-list rather than a tree to scroll.
+Threads are one level deep: a reply to a reply joins the thread it is in, so
+the page stays a list rather than a tree.
 """
 from __future__ import annotations
 
@@ -21,16 +20,16 @@ GONE_CHART = "A chart no longer on this dashboard"
 
 
 def frame_url(dashboard_id) -> str:
-    """The dashboard as Superset draws it, minus Superset's own menu and title.
+    """The URL of the dashboard as Superset draws it, without Superset's menu and title.
 
     ``standalone=2`` is Superset's documented URL parameter for that; the page
-    around the frame carries the title and the way back instead.
+    around the frame shows the title and the way back instead.
     """
     return f"/superset/dashboard/{dashboard_id}/?standalone=2"
 
 
 def chart_choices(charts, rows) -> list[dict]:
-    """What a new comment can be about, each with how many comments it has."""
+    """What a new comment can be about (the whole dashboard, each chart), with comment counts."""
     counts = Counter(r.get("chart_id") for r in rows)
     choices = [{"id": None, "label": WHOLE_DASHBOARD, "count": counts.get(None, 0)}]
     for chart_id, name in charts:
@@ -41,8 +40,8 @@ def chart_choices(charts, rows) -> list[dict]:
 def chart_for_new_comment(chart_id, charts):
     """The chart a new comment is attached to, or None for the whole dashboard.
 
-    A chart that is not on this dashboard is refused: the comment would be
-    filed under a dashboard nobody could find it from.
+    Raises ValueError for a chart that is not on this dashboard: nobody would
+    find the comment from this dashboard.
     """
     if chart_id is None:
         return None
@@ -83,10 +82,10 @@ def _shown(row, names, *, user_sub, is_admin) -> dict:
 
 
 def build_threads(rows, charts, *, user_sub, is_admin) -> list[dict]:
-    """The conversation, newest thread first, replies in the order written.
+    """The comments as threads, newest thread first, replies oldest first.
 
-    A reply whose comment was deleted is shown as a thread of its own rather
-    than dropped: somebody wrote it, and it may be the only record of a point.
+    A reply whose parent is missing from ``rows`` (deleted, say) is shown as a
+    thread of its own rather than dropped.
     """
     names = dict(charts)
     parent_of = {r["id"]: r.get("parent_id") for r in rows}

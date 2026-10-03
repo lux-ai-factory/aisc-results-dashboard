@@ -1,7 +1,8 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Native Superset SQLAlchemy model for comments (lives in Superset's metadata
-DB). Runtime-only: imports Superset's Model base."""
+"""SQLAlchemy model of a dashboard comment, stored in Superset's metadata database.
+
+Imported only inside Superset (it uses Superset's Model base)."""
 from sqlalchemy import Column, DateTime, Integer, String, Text, func
 
 from superset import db  # type: ignore
@@ -14,14 +15,14 @@ class AiscComment(Model):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     dashboard_id = Column(String(128), index=True, nullable=False)
-    chart_id = Column(Integer, index=True, nullable=True)   # None => overall
-    parent_id = Column(Integer, nullable=True)              # threading
+    chart_id = Column(Integer, index=True, nullable=True)   # None: about the whole dashboard
+    parent_id = Column(Integer, nullable=True)              # the comment this one replies to
     author_sub = Column(String(255), nullable=False)
     author_name = Column(String(255), nullable=False)
     body = Column(Text, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
-    # ledger phase 9 (D1): a deleted comment is hidden, not removed; what it said stays, and its ledger
-    # event (dashboard.comment.deleted) keeps it too
+    # A deleted comment is hidden, not removed: its text stays here, and the ledger event
+    # dashboard.comment.deleted records it too.
     deleted_at = Column(DateTime, nullable=True)
 
     def to_dict(self) -> dict:

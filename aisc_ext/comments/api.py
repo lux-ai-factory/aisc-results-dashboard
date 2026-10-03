@@ -1,14 +1,14 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Native Superset REST API for comments, mounted under /api/v1/aisc_comment.
+"""REST API for dashboard comments, under /api/v1/aisc_comment.
 
-Uses the verified Superset user as the author (never the request body), enforces
-delete = author-or-admin, and writes each action to the immudb audit ledger.
+The author is the signed-in Superset user, never a value from the request body.
+Only the author or an Admin may delete a comment. Each action is written to the
+immudb audit log and, when LEDGER_MODE is on, queued as a ledger event.
 
-Every route first asks Superset whether the caller may open the dashboard the
-comment is on, the same question Superset asks before drawing it: a person who
-cannot see a dashboard cannot read, write or delete its conversation either.
-Runtime-only (Flask/FAB/Superset imports)."""
+Every route first checks, with Superset's own check, that the caller may open
+the dashboard the comment is on: a person who cannot see a dashboard cannot
+read, write or delete its comments either. Imported only inside Superset."""
 from flask import g, request
 from flask_appbuilder.api import BaseApi, expose, protect, safe
 
@@ -24,7 +24,7 @@ _clerk = ImmudbClerk(**clerk_kwargs_from_env())
 
 
 def _send_queued():
-    """The ledger events queued so far, posted to the platform; never breaks the request (ledger phase 9)."""
+    """Post the queued ledger events to the platform. A failure is logged and never breaks the request."""
     from superset import db
 
     try:
@@ -38,11 +38,11 @@ def _send_queued():
 class CommentApi(BaseApi):
     resource_name = "aisc_comment"
     openapi_spec_tag = "AISC Comments"
-    # Flask-AppBuilder exempts its APIs from CSRF unless told otherwise, and
-    # Superset's own APIs do tell it (superset/views/base_api.py). This one is
-    # called with the session cookie from the Review page, and every tool of
-    # the platform is served from localhost, which a browser counts as one
-    # site: without the token, any of them could write here as the reader.
+    # Flask-AppBuilder exempts its APIs from CSRF unless told otherwise, as
+    # Superset's own APIs do (superset/views/base_api.py). This API is called
+    # with the session cookie from the Review page, and every AISC tool is
+    # served from localhost, which a browser counts as one site: without the
+    # CSRF token, any of them could write here as the signed-in user.
     csrf_exempt = False
 
     def _user(self):
@@ -69,10 +69,10 @@ class CommentApi(BaseApi):
     def _placement(self, body, dashboard):
         """Where a new comment goes, as ``{"parent_id", "chart_id"}``.
 
-        A reply goes to the top of its parent's thread; a new comment to a
-        chart of this dashboard, or to the whole dashboard. ValueError (or
-        TypeError, for a parent id that is not a number) when it cannot go
-        where the request asks."""
+        A reply goes under the top comment of its parent's thread; a new
+        comment goes on a chart of this dashboard, or on the whole dashboard.
+        Raises ValueError when it cannot go where the request asks (TypeError
+        for a parent id that is not a number)."""
         from aisc_ext.comments.model import AiscComment
         from superset import db
 
@@ -89,7 +89,7 @@ class CommentApi(BaseApi):
     @protect(allow_browser_login=True)
     @safe
     def threads(self):
-        """A dashboard's conversation, threaded, with what each comment can be about.
+        """A dashboard's comments as threads, with the charts a comment can be about.
         ---
         get:
           parameters:
@@ -171,8 +171,8 @@ class CommentApi(BaseApi):
             return self.response_400(message=str(exc))
         row = AiscComment(**{k: v for k, v in data.items() if k != "created_at"})
         db.session.add(row)
-        db.session.flush()                                              # its id, for its ledger event
-        # the event in the comment's own transaction (ledger phase 9): both commit, or neither
+        db.session.flush()                                              # gives the row its id, for the event
+        # the ledger event goes in the comment's own transaction: both commit, or neither
         ledger.emit(db.session.connection(), ledger.project_of(dashboard.slug), "dashboard.comment.created",
                     ledger.comment_created(row.to_dict(), slug=dashboard.slug,
                                               request=ledger.request_id(request.headers)))
@@ -203,7 +203,7 @@ class CommentApi(BaseApi):
             return self.response(403, message="Not your comment")
         from datetime import datetime, timezone
 
-        row.deleted_at = datetime.now(timezone.utc)                    # hidden, not removed (D1)
+        row.deleted_at = datetime.now(timezone.utc)                    # hidden, not removed
         ledger.emit(db.session.connection(), ledger.project_of(dashboard.slug), "dashboard.comment.deleted",
                     ledger.comment_deleted(row.to_dict(), slug=dashboard.slug,
                                               request=ledger.request_id(request.headers)))

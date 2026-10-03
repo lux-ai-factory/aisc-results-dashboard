@@ -1,22 +1,21 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Pure, testable Keycloak -> Superset role mapping.
+"""Keycloak to Superset role mapping, and which permissions a viewer keeps.
 
-Kept free of any Superset/FAB imports so it unit-tests without the app. The FAB
-SecurityManager that *uses* this lives in aisc_ext.sso (imported only at runtime
-inside Superset)."""
+This module imports nothing from Superset or Flask-AppBuilder, so it can be
+unit-tested without the app. The SecurityManager that uses it is aisc_ext.sso,
+imported only inside Superset."""
 from __future__ import annotations
 
-#: What an ordinary signed-in account gets. Not Gamma: Gamma holds can_write on
-#: Chart and Dashboard, so every account could edit or delete the dashboards
-#: everyone else reads. This role looks and comments, and nothing else.
+#: The role of an ordinary signed-in account. Not Gamma: Gamma holds can_write
+#: on Chart and Dashboard, so every account could edit or delete the dashboards
+#: everyone else reads. This role can look and comment, nothing else.
 VIEWER_ROLE = "AiscViewer"
 
-# Most-privileged first; the highest match wins and nothing elevates beyond it.
+# Most privileged first; the first match wins.
 #
-# admin and primary-user are the platform's own realm roles
-# (keycloak/aisc-realm.json); without them every platform account, its admin
-# included, would fall through to the default. The dashboard-* ones serve a
+# admin and primary-user are the realm roles of the AISC realm
+# (keycloak/aisc-realm.json in the aisc repo). The dashboard-* roles are for a
 # deployment whose realm defines them.
 _PRIORITY = [
     ("admin", "Admin"),
@@ -27,7 +26,7 @@ _PRIORITY = [
 ]
 
 #: The permissions a viewer keeps, by name. Anything not listed is not granted,
-#: so a new Superset permission is absent until somebody decides otherwise.
+#: so a permission added by a Superset upgrade stays off until someone adds it.
 VIEWER_PERMISSIONS = frozenset({
     "can_read",
     "menu_access",
@@ -48,13 +47,13 @@ VIEWER_PERMISSIONS = frozenset({
     "can_log",
 })
 
-#: Where a viewer may write: the comments and reviews they are here to leave.
-#: These change nobody's data and are the point of the review workflow.
+#: The views where a viewer may write: comments and reviews. They change no
+#: assessment data.
 VIEWER_WRITABLE_VIEWS = ("AiscComment", "AiscReview")
 
-#: Never, whatever else matches. SQL Lab on this instance reads the whole
-#: platform database through dashboard_ro: every module's schema, every
-#: project. A viewer is not given a query window onto that.
+#: Never granted to a viewer, whatever else matches: SQL Lab and raw SQL would
+#: let a viewer query every table a connection can reach, beyond the charts
+#: they were given; exports and writes are refused for the same reason.
 NEVER_FOR_A_VIEWER = frozenset({
     "can_sqllab",
     "can_sql_json",
@@ -82,8 +81,8 @@ def _viewer_keeps(name: str, view: str) -> bool:
 def viewer_permissions_from(permissions) -> list[tuple[str, str]]:
     """The subset of (permission, view) pairs a viewer keeps.
 
-    Given what another role holds, so the viewer is built from what this
-    Superset actually has rather than from a list that drifts from it.
+    It filters what another role holds, so the viewer is built from the
+    permissions this Superset version actually has rather than from a fixed list.
     """
     return [(name, view) for name, view in permissions if _viewer_keeps(name, view)]
 
@@ -93,10 +92,10 @@ def extract_realm_roles(claims: dict) -> list[str]:
 
 
 def roles_for_login(realm_roles: list[str], member_project_pids) -> list[str]:
-    """The realm's role, then one AiscProject_<hex> per project the person is in.
+    """The role mapped from the realm roles, then one project role per membership.
 
-    A project's dashboard is visible to its role only (DASHBOARD_RBAC), so this
-    is what lets a member see it and keeps everyone else out."""
+    A project's dashboard is visible to its project role only (DASHBOARD_RBAC),
+    so these roles are what let a member see it and keep everyone else out."""
     from aisc_ext.projects import project_role_name
 
     out = list(map_keycloak_roles(realm_roles))
@@ -112,5 +111,5 @@ def map_keycloak_roles(realm_roles: list[str]) -> list[str]:
     for kc_role, fab_role in _PRIORITY:
         if kc_role in roles:
             return [fab_role]
-    # The default has to be the least thing, not the most convenient one.
+    # No matching realm role: the least privileged role.
     return [VIEWER_ROLE]

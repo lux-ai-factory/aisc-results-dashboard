@@ -1,11 +1,11 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""The dashboard bridge: POST / DELETE /api/v1/aisc_project/<pid>.
+"""The dashboard bridge: POST and DELETE /api/v1/aisc_project/<pid>.
 
-The platform calls it after it provisions a project and before it drops one;
-it makes or removes that project's dashboard objects (aisc_ext.projects). The
-call is authenticated by X-AISC-Bridge-Token, not by a session cookie, so it is
-exempt from CSRF. Runtime-only (Flask/FAB/Superset imports)."""
+The platform calls POST after it creates a project and DELETE before it drops
+one; they create or remove that project's dashboard objects (aisc_ext.projects).
+The call is authenticated by the X-AISC-Bridge-Token header, not by a session
+cookie, so it is exempt from CSRF. Imported only inside Superset."""
 import os
 
 from flask import request
@@ -17,7 +17,7 @@ from aisc_ext.projects import SupersetStore, authorize_bridge, register_project,
 class ProjectBridgeApi(BaseApi):
     resource_name = "aisc_project"
     openapi_spec_tag = "AISC Project bridge"
-    # Token-authenticated, never called with a cookie: CSRF does not apply.
+    # Authenticated by token, never by cookie, so CSRF does not apply.
     csrf_exempt = True
 
     def _refused(self):

@@ -3,13 +3,14 @@
 """The Review page, served by Superset through Flask-AppBuilder's own views.
 
 ``/aisc/review/`` lists the dashboards the caller may open; ``/aisc/review/<id>/``
-shows one of them in a frame, in Superset's standalone mode, with the
-conversation beside it. The frame is Superset drawing its own dashboard at its
-own address, so nothing here reads or changes Superset's pages, and an upgrade
-that redraws the dashboard cannot break the conversation around it.
+shows one of them in an iframe, in Superset's standalone mode, with its comments
+beside it. The iframe is Superset's own dashboard page, so nothing here reads or
+changes Superset's pages, and an upgrade that redraws the dashboard does not
+break the comments around it.
 
-Same origin as Superset: the frame, the session and the comments API need no
-embedding headers, no third-party cookies and no CORS. Runtime-only.
+The page has the same origin as Superset, so the iframe, the session and the
+comments API need no embedding headers, third-party cookies or CORS. Imported
+only inside Superset.
 """
 import os
 

@@ -1,9 +1,9 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Pure comments domain logic — no Superset/DB imports, fully unit-tested.
+"""Comment rules: building a comment, filtering by scope, who may delete.
 
-The SQLAlchemy model (aisc_ext.comments.model) and the FAB REST API
-(aisc_ext.comments.api) use these helpers at runtime."""
+No Superset or database imports, so it is unit-tested on its own. The REST API
+(aisc_ext.comments.api) uses these helpers."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -16,9 +16,9 @@ def make_comment(*, dashboard_id: str, author_sub: str, author_name: str,
         raise ValueError("Comment body must not be empty")
     return {
         "dashboard_id": dashboard_id,
-        "chart_id": chart_id,            # None => dashboard-level ("overall")
-        "parent_id": parent_id,          # threading
-        "author_sub": author_sub,        # from the verified identity
+        "chart_id": chart_id,            # None: about the whole dashboard ("overall")
+        "parent_id": parent_id,          # the comment this one replies to
+        "author_sub": author_sub,        # from the signed-in user, never the request
         "author_name": author_name,
         "body": body.strip(),
         "created_at": datetime.now(timezone.utc),

@@ -1,7 +1,8 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Superset EVENT_LOGGER that mirrors actions into the immudb audit ledger.
-Runtime-only (imports Superset's AbstractEventLogger)."""
+"""Superset EVENT_LOGGER that copies each logged action into the immudb audit log.
+
+Imported only inside Superset (it subclasses AbstractEventLogger)."""
 from superset.utils.log import AbstractEventLogger  # type: ignore
 
 from aisc_ext.audit import ImmudbClerk, clerk_kwargs_from_env

@@ -1,9 +1,10 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Pure review-request domain logic (no Superset/DB imports; unit-tested).
+"""Review request rules: building a request, who it is for, who may resolve it.
 
-A review request asks a specific user OR a stakeholder-group category to comment
-on a scope (dashboard overall, or one chart)."""
+A review request asks one user, or everyone in a stakeholder group, to comment
+on a dashboard as a whole or on one of its charts. No Superset or database
+imports, so it is unit-tested on its own."""
 from __future__ import annotations
 
 from datetime import datetime, timezone

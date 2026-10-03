@@ -1,11 +1,10 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""immudb-backed audit ledger for Superset actions.
+"""Audit log of Superset actions in immudb (table superset_audit).
 
-`build_audit_row` is a pure helper (unit-tested). `ImmudbClerk` wraps the
-immudb SQL client and degrades to a no-op if disabled or unreachable, so
-auditing never blocks or breaks a Superset request. The FAB EVENT_LOGGER that
-feeds this lives in aisc_ext.event_logger (runtime-only)."""
+`ImmudbClerk` wraps the immudb SQL client and does nothing when auditing is
+disabled or immudb is unreachable, so auditing never blocks or breaks a Superset
+request. The EVENT_LOGGER that feeds it is aisc_ext.event_logger."""
 from __future__ import annotations
 
 import json
@@ -14,13 +13,13 @@ import time
 from datetime import datetime, timezone
 
 _TABLE = "superset_audit"
-_MAX_WRITE_RETRIES = 3       # immudb MVCC aborts concurrent txns ("tx read conflict")
-_RETRY_BACKOFF_S = 0.05      # brief backoff between INSERT retries
-_CONNECT_RETRY_COOLDOWN_S = 30.0  # after a failed connect, don't hammer immudb
+_MAX_WRITE_RETRIES = 3       # immudb aborts concurrent transactions ("tx read conflict")
+_RETRY_BACKOFF_S = 0.05
+_CONNECT_RETRY_COOLDOWN_S = 30.0  # wait this long after a failed connect before trying again
 
 
 def clerk_kwargs_from_env() -> dict:
-    """ImmudbClerk constructor kwargs from the environment (dev defaults)."""
+    """ImmudbClerk keyword arguments from the environment (defaults suit a local stack)."""
     return {
         "enabled": os.environ.get("AISC_AUDIT_ENABLED", "true").lower() == "true",
         "host": os.environ.get("IMMUDB_HOST", "immudb"),
@@ -52,15 +51,15 @@ class ImmudbClerk:
         self.user, self.password = user, password
         self.connect_timeout = connect_timeout
         self._client = None
-        self._next_retry_at = 0.0  # epoch after which a failed connect may retry
+        self._next_retry_at = 0.0  # time.monotonic() after which a failed connect may be retried
 
     def _connect(self):
         if not self.enabled:
             return None
         if self._client is not None:
             return self._client
-        # A prior connect failed recently: skip the (slow) attempt so a down
-        # immudb doesn't add multi-second latency to every logged request.
+        # A connect failed recently: skip the slow attempt, so an immudb that is
+        # down does not add seconds to every logged request.
         if time.monotonic() < self._next_retry_at:
             return None
         try:
@@ -90,9 +89,9 @@ class ImmudbClerk:
         row = build_audit_row(actor=actor, action=action, target=target, extra=extra)
         stmt = (f"INSERT INTO {_TABLE} (ts, actor, action, target, summary, payload) "
                 "VALUES (@ts,@actor,@action,@target,@summary,@payload);")
-        # immudb serialises SQL txns with MVCC: concurrent workers writing audit
+        # immudb serialises SQL transactions: concurrent workers writing audit
         # rows abort with "tx read conflict". Retry a few times so ordinary
-        # concurrent load doesn't silently drop tamper-evidence records.
+        # concurrent load does not drop audit records.
         for attempt in range(_MAX_WRITE_RETRIES):
             try:
                 client.sqlExec(stmt, params=row)

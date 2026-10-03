@@ -1,7 +1,8 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Menu-accessible review-request surface, rendered by Flask-AppBuilder.
-Replaces the retired DOM-injected widget. Runtime-only (imports FAB)."""
+"""The Assessment > Review Requests page, rendered by Flask-AppBuilder.
+
+Imported only inside Superset."""
 from flask_appbuilder import ModelView  # type: ignore
 from flask_appbuilder.models.sqla.interface import SQLAInterface  # type: ignore
 

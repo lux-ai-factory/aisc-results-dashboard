@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Keycloak OIDC SecurityManager for Superset.
 
-Reads the Keycloak userinfo, and on each login syncs the user's FAB roles from
-their Keycloak realm roles and project memberships via the (unit-tested)
-roles_for_login. Runtime-only."""
+Reads the Keycloak userinfo and, at each login, sets the user's Flask-AppBuilder
+roles from their Keycloak realm roles and project memberships, using
+security.roles_for_login. Imported only inside Superset."""
 import logging
 import os
 
@@ -28,19 +28,20 @@ class KeycloakSecurityManager(SupersetSecurityManager):
             "email": data.get("email"),
             "first_name": data.get("given_name", ""),
             "last_name": data.get("family_name", ""),
-            # carried through so the role sync below can read it
+            # passed on so auth_user_oauth can map them to roles
             "realm_roles": (data.get("realm_access") or {}).get("roles", []),
             # the Keycloak subject, which is what core.project_member records
             "subject": data.get("sub"),
         }
 
     def _member_projects(self, subject):
-        """The projects this subject is in, read from core.project_member over
-        AISC_MEMBERSHIP_DB_URI (dashboard_ro on `platform`). That DSN is a plain
-        SQLAlchemy engine for this one sign-in, without a pool, disposed after:
-        it is never a Superset connection, so SQL Lab cannot reach `platform`.
-        None known, a DSN that is not read-only, or the database down means no
-        project role."""
+        """The project ids this Keycloak subject is a member of.
+
+        Read from core.project_member over AISC_MEMBERSHIP_DB_URI (dashboard_ro on
+        `platform`), with a plain SQLAlchemy engine without a pool that is
+        disposed after this sign-in. It is never a Superset connection, so SQL
+        Lab cannot reach `platform`. An unset DSN, a DSN that is not read-only,
+        or an unreachable database gives an empty list (no project roles)."""
         if not subject:
             return []
         try:
@@ -77,19 +78,16 @@ class KeycloakSecurityManager(SupersetSecurityManager):
         return user
 
 def skip_provider_picker(path, method, authenticated, provider="keycloak"):
-    """The provider to jump to for this request, or None to leave it alone.
+    """The provider to redirect this request to, or None to leave it alone.
 
     With a single OAuth provider, Flask-AppBuilder's /login/ is a page with one
-    button on it. Anyone arriving there already has a session at the identity
-    provider more often than not, so the button is pure friction: sending them
-    straight to /login/<provider> logs them in without a visible sign-in screen,
-    and sends them to the provider's own form when they do need to authenticate.
+    button. Most visitors already have a Keycloak session, so sending them
+    straight to /login/<provider> signs them in without a visible step, and
+    shows Keycloak's own form to those who must authenticate.
 
-    Deliberately narrow: only an anonymous GET of the login page itself. The
-    provider route is left alone (it is where this sends people, so redirecting
-    it would loop), POSTs are left alone (FAB's own form), and an authenticated
-    visitor is left to FAB, which already redirects them to the index rather
-    than starting another OAuth round trip."""
+    Only an anonymous GET of /login itself is redirected. /login/<provider> is
+    left alone (redirecting it would loop), so are POSTs (FAB's own form) and
+    signed-in visitors, whom FAB already sends to the index."""
     if method != "GET" or authenticated:
         return None
     if path.rstrip("/") != "/login":
