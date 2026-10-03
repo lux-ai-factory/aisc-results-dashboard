@@ -2,9 +2,10 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
 #
-# One-shot: download the stock Superset instance + supporting images, start the
-# overlay, and initialise the metadata DB + admin user. Idempotent-ish: safe to
-# re-run; DB init is skipped by Superset if already applied.
+# Standalone setup: build the image, pull Postgres, Redis and immudb, start the
+# stack of docker-compose.yml, and initialise the metadata database and a local
+# admin user. Safe to re-run: applied migrations are skipped and an existing
+# admin is kept. Not used inside the AISC stack.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -18,7 +19,7 @@ if [[ ! -f .env ]]; then
 fi
 
 echo "==> downloading Superset + supporting images (this is the 'automated download')"
-docker compose build --pull        # pulls apache/superset:<tag> and layers the 3 deps
+docker compose build --pull        # pulls apache/superset:<tag> and adds three Python packages
 docker compose pull superset-db superset-redis immudb
 
 echo "==> starting the stack"

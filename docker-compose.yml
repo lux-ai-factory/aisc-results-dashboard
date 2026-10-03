@@ -1,10 +1,12 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
 #
-# Stock Superset + a thin deps layer + bind-mounted config/extension/branding.
-# No nginx sidecar: Superset serves directly on :8188. No celery worker (all
-# async features are off). Rebranding needs NO rebuild -- change .env + the
-# mounted logo and restart.
+# Standalone stack, for development outside AISC: the dashboard image with the
+# config, extension and branding bind-mounted, plus its own Postgres (metadata),
+# Redis and immudb. Superset serves directly on :8188. There is no Celery worker
+# because every async feature is off. Rebranding needs no rebuild: change .env
+# or the mounted logo and restart. Inside AISC the dashboard runs from the aisc
+# repo's docker-compose.development.yml instead.
 name: aisc-results-dashboard
 
 x-superset-env: &superset-env
@@ -21,12 +23,12 @@ x-superset-env: &superset-env
   AISC_MEMBERSHIP_DB_URI: ${AISC_MEMBERSHIP_DB_URI:-}
   # host:port of the project databases; the bridge builds one connection per project from it
   AISC_PROJECT_DB_HOSTPORT: ${AISC_PROJECT_DB_HOSTPORT:-postgres:5432}
-  # ---- branding (default = AISC; override for another tenant) ----
+  # ---- branding (blank means the AISC default) ----
   BRANDING_APP_NAME: ${BRANDING_APP_NAME:-}
   BRANDING_LOGO: ${BRANDING_LOGO:-}
   BRANDING_PRIMARY: ${BRANDING_PRIMARY:-}
   BRANDING_SECONDARY: ${BRANDING_SECONDARY:-}
-  # ---- interactive embedding: origins allowed to frame the dashboard ----
+  # ---- embedding: origins allowed to frame the dashboard ----
   EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-}
   # ---- Keycloak SSO (AISC_OAUTH=1 to enable) ----
   AISC_OAUTH: ${AISC_OAUTH:-}
@@ -64,7 +66,7 @@ services:
     ports:
       - "8188:8088"
     volumes:
-      # the entire customization, mounted read-only -- no rebuild to change it
+      # the whole customisation, mounted read-only, so changing it needs no rebuild
       - ./superset_config.py:/app/pythonpath/superset_config.py:ro
       - ./aisc_ext:/app/pythonpath/aisc_ext:ro
       # served at /static/assets/branding/<tenant>/... ; APP_ICON points here
