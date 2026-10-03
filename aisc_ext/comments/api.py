@@ -12,6 +12,7 @@ Runtime-only (Flask/FAB/Superset imports)."""
 from flask import g, request
 from flask_appbuilder.api import BaseApi, expose, protect, safe
 
+from aisc_ext import ledger
 from aisc_ext.audit import ImmudbClerk, clerk_kwargs_from_env
 from aisc_ext.comments.service import can_delete, make_comment
 from aisc_ext.dashboards import open_dashboard
@@ -20,6 +21,18 @@ from aisc_ext.review.service import (
 )
 
 _clerk = ImmudbClerk(**clerk_kwargs_from_env())
+
+
+def _send_queued():
+    """The ledger events queued so far, posted to the platform; never breaks the request (ledger phase 9)."""
+    from superset import db
+
+    try:
+        ledger.deliver(db.engine, ledger.http_sender())
+    except Exception:                                                   # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).exception("ledger: dashboard events stay queued")
 
 
 class CommentApi(BaseApi):
@@ -90,7 +103,7 @@ class CommentApi(BaseApi):
             return refused
         sub, _, is_admin = self._user()
         rows = [r.to_dict() for r in db.session.query(AiscComment)
-                .filter(AiscComment.dashboard_id == str(dashboard.id)).all()]
+                .filter(AiscComment.dashboard_id == str(dashboard.id), AiscComment.deleted_at.is_(None)).all()]
         charts = self._charts(dashboard)
         return self.response(200, result={
             "dashboard": {"id": dashboard.id, "title": dashboard.dashboard_title},
@@ -122,7 +135,8 @@ class CommentApi(BaseApi):
         dashboard, refused = self._dashboard(request.args.get("dashboard_id"))
         if refused:
             return refused
-        q = db.session.query(AiscComment).filter(AiscComment.dashboard_id == str(dashboard.id))
+        q = db.session.query(AiscComment).filter(AiscComment.dashboard_id == str(dashboard.id),
+                                                 AiscComment.deleted_at.is_(None))
         if request.args.get("overall") == "true":
             q = q.filter(AiscComment.chart_id.is_(None))
         elif request.args.get("chart_id"):
@@ -153,7 +167,13 @@ class CommentApi(BaseApi):
             return self.response_400(message=str(exc))
         row = AiscComment(**{k: v for k, v in data.items() if k != "created_at"})
         db.session.add(row)
+        db.session.flush()                                              # its id, for its ledger event
+        # the event in the comment's own transaction (ledger phase 9): both commit, or neither
+        ledger.emit(db.session.connection(), ledger.project_of(dashboard.slug), "dashboard.comment.created",
+                    ledger.comment_created(row.to_dict(), slug=dashboard.slug,
+                                              request=ledger.request_id(request.headers)))
         db.session.commit()
+        _send_queued()
         scope = f"chart {row.chart_id}" if row.chart_id else "overall"
         _clerk.record(actor=name, action="comment.create", target=row.dashboard_id,
                       extra={"comment_id": row.id, "scope": scope})
@@ -168,15 +188,21 @@ class CommentApi(BaseApi):
 
         sub, name, is_admin = self._user()
         row = db.session.query(AiscComment).get(pk)
-        if not row:
+        if not row or row.deleted_at is not None:
             return self.response_404()
-        _, refused = self._dashboard(row.dashboard_id)
+        dashboard, refused = self._dashboard(row.dashboard_id)
         if refused:
             return refused
         if not can_delete(row.to_dict(), user_sub=sub, is_admin=is_admin):
             return self.response(403, message="Not your comment")
-        db.session.delete(row)
+        from datetime import datetime, timezone
+
+        row.deleted_at = datetime.now(timezone.utc)                    # hidden, not removed (D1)
+        ledger.emit(db.session.connection(), ledger.project_of(dashboard.slug), "dashboard.comment.deleted",
+                    ledger.comment_deleted(row.to_dict(), slug=dashboard.slug,
+                                              request=ledger.request_id(request.headers)))
         db.session.commit()
+        _send_queued()
         _clerk.record(actor=name, action="comment.delete", target=row.dashboard_id,
                       extra={"comment_id": pk})
         return self.response(200, message="deleted")

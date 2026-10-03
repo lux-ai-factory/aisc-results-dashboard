@@ -17,11 +17,11 @@ class AiscCommentView(ModelView):
     # and the chart. A form here would do neither: it has no author to save,
     # and would let anyone holding can_edit rewrite what somebody else said.
     base_permissions = ["can_list", "can_show"]
-    list_columns = ["dashboard_id", "chart_id", "author_name", "body", "created_at"]
+    list_columns = ["dashboard_id", "chart_id", "author_name", "body", "created_at", "deleted_at"]
     show_columns = list_columns + ["parent_id", "author_sub"]
     search_columns = ["dashboard_id", "chart_id", "author_name"]
     add_columns = ["dashboard_id", "chart_id", "parent_id", "body"]
     edit_columns = ["body"]
     base_order = ("created_at", "desc")
     label_columns = {"dashboard_id": "Dashboard", "chart_id": "Chart",
-                     "author_name": "Author", "created_at": "Created"}
+                     "author_name": "Author", "created_at": "Created", "deleted_at": "Deleted"}

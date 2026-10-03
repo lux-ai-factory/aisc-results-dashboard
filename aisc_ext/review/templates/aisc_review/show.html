@@ -93,6 +93,7 @@
 
   <aside class="talk" id="talk" aria-label="Comments"
          data-dashboard="{{ dashboard.id }}"
+         data-slug="{{ dashboard.slug }}"
          data-api="/api/v1/aisc_comment/">
     <div class="talk-head">
       <div class="title">
@@ -126,6 +127,7 @@
   var talk = document.getElementById("talk");
   var API = talk.dataset.api;
   var DASHBOARD = talk.dataset.dashboard;
+  var SLUG = talk.dataset.slug || "";
   var CSRF = document.querySelector('meta[name="csrf-token"]').content;
   var POLL_MS = 20000;
 
@@ -176,6 +178,11 @@
   }
 
   function call(method, path, body) {
+    // a write names the dashboard by its slug, which names the project to the gateway's witness
+    // (ledger phase 9): the ledger then files the comment's event in that project's log
+    if (method !== "GET" && SLUG) {
+      path += (path.indexOf("?") < 0 ? "?" : "&") + "dashboard=" + encodeURIComponent(SLUG);
+    }
     return fetch(API + path, {
       method: method,
       credentials: "same-origin",

@@ -60,7 +60,7 @@ class AiscReviewView(BaseView):
             abort(status)
         return self.render_template(
             "aisc_review/show.html",
-            dashboard={"id": dashboard.id, "title": dashboard.dashboard_title},
+            dashboard={"id": dashboard.id, "title": dashboard.dashboard_title, "slug": dashboard.slug or ""},
             frame=frame_url(dashboard.id),
             **self._brand(),
         )

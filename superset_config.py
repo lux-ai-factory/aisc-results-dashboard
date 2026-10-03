@@ -235,6 +235,15 @@ def _install_extension(app):
             appbuilder.add_view(view, name, category="Assessment", icon=icon)
         for model in (AiscComment, AiscReviewRequest):
             model.__table__.create(bind=db.engine, checkfirst=True)
+        # ledger phase 9: a comment is hidden when deleted (a table made before keeps its rows and gains
+        # the column), and the extension's ledger outbox, in this same database
+        from sqlalchemy import text
+
+        from aisc_ext import ledger
+
+        with db.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE aisc_comment ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP"))
+        ledger.OUTBOX.metadata.create_all(db.engine)
 
         # The viewer role, built from what Gamma holds minus the writing.
         # Before the grants below, so it exists to receive them.

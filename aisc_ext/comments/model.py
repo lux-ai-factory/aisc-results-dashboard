@@ -20,6 +20,9 @@ class AiscComment(Model):
     author_name = Column(String(255), nullable=False)
     body = Column(Text, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
+    # ledger phase 9 (D1): a deleted comment is hidden, not removed; what it said stays, and its ledger
+    # event (dashboard.comment.deleted) keeps it too
+    deleted_at = Column(DateTime, nullable=True)
 
     def to_dict(self) -> dict:
         return {

@@ -5,12 +5,26 @@ Runtime-only (Flask/FAB/Superset). Audited to immudb."""
 from flask import g, request
 from flask_appbuilder.api import BaseApi, expose, protect, safe
 
+from aisc_ext import ledger
+from aisc_ext.comments.api import _send_queued
 from aisc_ext.audit import ImmudbClerk, clerk_kwargs_from_env
 from aisc_ext.reviews.service import (
     STAKEHOLDER_GROUPS, can_resolve, is_for_user, make_request,
 )
 
 _clerk = ImmudbClerk(**clerk_kwargs_from_env())
+
+
+def _slug_of(dashboard_id) -> str | None:
+    """The slug of the dashboard a review request names (its id or slug), for its ledger event."""
+    from superset import db
+    from superset.models.dashboard import Dashboard  # type: ignore
+
+    key = str(dashboard_id or "")
+    query = db.session.query(Dashboard)
+    found = query.filter(Dashboard.id == int(key)).one_or_none() if key.isdigit() else \
+        query.filter(Dashboard.slug == key).one_or_none()
+    return found.slug if found is not None else None
 
 
 def _user():
@@ -69,7 +83,13 @@ class ReviewRequestApi(BaseApi):
             assignee_category=b.get("assignee_category"), chart_id=b.get("chart_id"),
         )
         row = AiscReviewRequest(**{k: v for k, v in data.items() if k != "created_at"})
-        db.session.add(row); db.session.commit()
+        db.session.add(row)
+        db.session.flush()                                              # its id, for its ledger event
+        slug = _slug_of(row.dashboard_id)
+        ledger.emit(db.session.connection(), ledger.project_of(slug), "dashboard.review.requested",
+                    ledger.review_requested(row.to_dict(), slug=slug, request=ledger.request_id(request.headers)))
+        db.session.commit()
+        _send_queued()
         tgt = data["assignee_user_sub"] or data["assignee_category"]
         _clerk.record(actor=name, action="review.request", target=row.dashboard_id,
                       extra={"id": row.id, "assignee": tgt, "type": data["assignee_type"]})
@@ -89,9 +109,15 @@ class ReviewRequestApi(BaseApi):
         if not can_resolve(row.to_dict(), user_sub=sub, user_groups=groups, is_admin=is_admin):
             return self.response(403, message="Not allowed to resolve this request")
         action = (request.json or {}).get("action", "done")
+        status_before = row.status or "open"
         row.status = "dismissed" if action == "dismiss" else "done"
         row.resolved_at = datetime.now(timezone.utc); row.resolved_by = name
+        slug = _slug_of(row.dashboard_id)
+        ledger.emit(db.session.connection(), ledger.project_of(slug), "dashboard.review.resolved",
+                    ledger.review_resolved(row.to_dict(), status_before=status_before, slug=slug,
+                                              request=ledger.request_id(request.headers)))
         db.session.commit()
+        _send_queued()
         _clerk.record(actor=name, action=f"review.{row.status}", target=row.dashboard_id,
                       extra={"id": pk})
         return self.response(200, result=row.to_dict())
