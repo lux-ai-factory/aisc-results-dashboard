@@ -1,19 +1,11 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Isolation 2026-09-25: the dashboard reads each project from its own database only.
+"""The dashboard reads each project from that project's own database only.
 
-Requirement ids are from docs/superpowers/isolation-2026-09-25/01-specs.md
-(section 10, I17.1). Pure tests: the FakeStore of test_projects.py, source scans for
-the runtime-only modules (sso.py and superset_config.py import Superset, which the
-unit venv does not have), and a stand-in for Superset's models to exercise
-SupersetStore's dataset upsert.
-
-The existing tests this design changes (named in 02-tests.md, not edited here):
-test_projects.py::test_s11_1_engine_dataset_is_on_the_results_connection_and_carries_the_version
-and ::test_s11_4_engine_dataset_filters_on_this_project_only pin the dataset on
-"AISC Results" with a pid filter and core.system; test_results_database.py pins
-the registration of "AISC Results"; test_project_datasets_db.py's engine tests read
-core.system in `platform`.
+No database needed: the FakeStore of test_projects.py, text scans of the modules
+that import Superset (sso.py, superset_config.py, which the test environment does
+not have), and a stand-in for Superset's models to exercise SupersetStore's
+dataset upsert.
 """
 import pathlib
 import re
@@ -42,7 +34,7 @@ def _register(store, pid=PID, slug="mcas", name="MCAS"):
 
 
 def _engine_sql(pid=PID):
-    """The engine dataset SQL. Under I10.1 it needs no pid; today it takes one."""
+    """The engine dataset SQL, whether or not engine_results_sql takes a pid."""
     projects = _projects()
     try:
         return projects.engine_results_sql()
@@ -54,7 +46,7 @@ def _flat(sql):
     return " ".join(sql.split()).lower()
 
 
-# ---- I10.1: the engine dataset sits on the project's own connection ----------
+# ---- the engine dataset sits on the project's own connection -----------------
 
 def test_i10_1_the_engine_dataset_is_on_the_projects_own_connection():
     store = FakeStore()
@@ -81,7 +73,7 @@ def test_i10_1_the_engine_sql_has_no_pid_filter():
 
 
 def test_i10_1_reregistering_moves_a_dataset_that_sits_on_aisc_results():
-    """A dataset registered before isolation (on AISC Results) is upserted onto the project connection."""
+    """A dataset still on the old "AISC Results" connection is moved onto the project connection."""
     store = FakeStore()
     store.upsert("dataset", f"engine_results_{HEX}", {"aisc_project": PID, "database": "AISC Results", "sql": "old"})
     _register(store)
@@ -152,8 +144,8 @@ def test_i10_1_supersetstore_keeps_the_dataset_id_when_it_moves(monkeypatch):
 
 
 def test_i10_1_isolation_a_projects_role_reaches_only_its_own_database():
-    """Cross-project (I16.5 for the dashboard): with A and B registered, A's role names only A's
-    objects, and A's two datasets sit on a connection to project_<A hex> and nothing else."""
+    """With projects A and B registered, A's role names only A's objects, and A's two datasets
+    sit on a connection to project_<A hex> and nothing else."""
     store = FakeStore()
     _register(store)
     _register(store, pid=OTHER, slug="other", name="Other")
@@ -167,7 +159,7 @@ def test_i10_1_isolation_a_projects_role_reaches_only_its_own_database():
 
 
 def test_i10_1_unregister_leaves_no_engine_dataset_of_the_project():
-    """Unchanged behaviour, now with the dataset on the project connection."""
+    """The same behaviour with the dataset on the project connection."""
     store = FakeStore()
     _register(store)
     _projects().unregister_project(PID, store=store)
@@ -175,7 +167,7 @@ def test_i10_1_unregister_leaves_no_engine_dataset_of_the_project():
     assert "AISC Controls mcas" not in store.items("database")
 
 
-# ---- I10.2: no platform connection in Superset; membership over a plain DSN --
+# ---- no platform connection in Superset; membership over a plain DSN --------
 
 def test_i10_2_superset_config_no_longer_registers_aisc_results():
     text = (ROOT / "superset_config.py").read_text()
@@ -218,7 +210,7 @@ def test_i10_2_the_dashboards_compose_file_passes_the_membership_dsn():
     assert "AISC_MEMBERSHIP_DB_URI" in text
 
 
-# ---- I10.4 / I17.1: no persistent pool on analytics connections --------------
+# ---- no persistent pool on query connections ---------------------------------
 
 def _pool_size_in(extra: str) -> int | None:
     m = re.search(r'"pool_size"\s*:\s*(\d+)', extra or "")
@@ -241,11 +233,11 @@ def test_i10_4_the_project_connection_asks_for_no_pool_above_two():
     assert size is None or size <= 2
 
 
-# ---- I10.5: bridge ordering is the platform's; the bridge contract is unchanged
+# ---- the bridge route and its token check -----------------------------------
 
 def test_i10_5_the_bridge_route_and_token_are_unchanged():
-    """Ordering on create/delete is pinned by platform/tests/test_dashboard_bridge.py; here the
-    bridge keeps its route and token check (test_project_bridge.py S11.6 cases stay green)."""
+    """The bridge keeps its route and token check. The order of the platform's create and delete
+    calls is tested in the aisc repo, platform/tests/test_dashboard_bridge.py."""
     projects = _projects()
     assert projects.authorize_bridge({}, {"DASHBOARD_BRIDGE_TOKEN": "t"}) == 401
     text = (ROOT / "aisc_ext" / "project_bridge_api.py").read_text()

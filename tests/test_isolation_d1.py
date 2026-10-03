@@ -1,16 +1,15 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Isolation WP D1 (03-coding-plan.md, WP D1): what the plan adds beyond the stage-2 tests.
+"""Moving from the shared "AISC Results" connection to one connection per project.
 
-- `results_db.remove_results_connection()`: cutover step C12 (X1) deletes the retired
-  "AISC Results" connection with it. It refuses while any dataset still sits on that
-  connection, and otherwise deletes the rows of every table with a foreign key to
-  Superset's `dbs` for that connection, then the `dbs` row, and returns the count.
-  Tested on a fake of Superset's metadata that enforces its foreign keys, so the delete
-  order is proven, not assumed.
+- `results_db.remove_results_connection()` deletes the old "AISC Results"
+  connection. It refuses while any dataset still uses it, and otherwise deletes the
+  rows of every table with a foreign key to Superset's `dbs` for that connection,
+  then the `dbs` row, and returns the count. It is tested on a fake of Superset's
+  metadata that enforces its foreign keys, so the delete order is checked.
 - `SupersetStore._upsert_dataset`: a dataset that moves to the project connection keeps
   its old permission names at flush, so Superset's own rename hook moves the view menu
-  and the charts' perm with it (the plan asked for a refresh here; see 04-D1-notes.md).
+  and the charts' perm with it.
 - `scripts/verify_review.py` builds its check dataset on a project connection.
 """
 import pathlib
@@ -224,7 +223,7 @@ def test_a_moved_dataset_keeps_its_old_permission_names_for_supersets_rename_hoo
     assert dataset.schema_perm == "[AISC Results].[engine]"
 
 
-# ---- the review check script no longer needs the retired connection -------------
+# ---- the review check script uses a project connection ---------------------------
 
 def test_verify_review_builds_its_dataset_on_a_project_connection():
     text = (ROOT / "scripts" / "verify_review.py").read_text()

@@ -1,15 +1,13 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Isolation 2026-09-25 (01-specs.md I10.1, I10.3, I19.3): the engine dataset, run for real as
-dashboard_ro inside a project database.
+"""The engine dataset, run for real as dashboard_ro inside a project database.
 
-Same THROWAWAY container convention as test_project_datasets_db.py
+Uses the same throwaway container as test_project_datasets_db.py
 (AISC_DASHBOARD_TEST_PG_CONTAINER=aisc-t-...; skipped when unset). The project database R is
-made with every platform template file (0006_project_system.sql and 0009_engine.sql come from
-WP P1; until they exist the tests FAIL naming the missing file). The engine tables are the
-reduced frozen-engine DDL of test_project_datasets_db.py, created as engine_rw in R's `engine`
-schema; the SELECT grant to dashboard_ro stands in for the engine's migrate_projects grants
-(I7.6), whose exact matrix is tested by scripts/tests/test_project_grants.py (I2.6, I16.1).
+made with every file of the aisc repo's platform/project-template (a missing file fails the
+test with its name). The engine tables are the reduced engine DDL of test_project_datasets_db.py,
+created as engine_rw in R's `engine` schema; the SELECT grant to dashboard_ro stands in for the
+engine's own project grants, which the aisc repo tests in scripts/tests/test_project_grants.py.
 """
 import os
 import pathlib
@@ -22,12 +20,12 @@ R = "5d0c1a2b-3e4f-4a5b-8c6d-7e8f9a0b1c2d"
 R_HEX = R.replace("-", "")
 DB = f"project_{R_HEX}"
 RV1 = "44444444-4444-4444-8444-444444444444"
-# A second project database S, for the cross-project case (I16.5 on the dashboard).
+# A second project database S, for the cross-project case.
 S = "6e1d2b3c-4f5a-4b6c-9d7e-8f9a0b1c2d3e"
 S_DB = f"project_{S.replace('-', '')}"
 SV1 = "55555555-5555-4555-8555-555555555555"
-# ISOLATION_TEMPLATE_DIR lets 02-tests.md's dry check point this at a scratch copy with
-# stand-in 0006/0009, to prove the test bodies before WP P1 exists. Unset in every real run.
+# ISOLATION_TEMPLATE_DIR points this at another copy of the template files (a scratch
+# copy with stand-ins, for instance). Leave it unset for a real run.
 TEMPLATES = pathlib.Path(os.environ.get("ISOLATION_TEMPLATE_DIR") or ROOT / "platform" / "project-template")
 
 pytestmark = pytest.mark.skipif(

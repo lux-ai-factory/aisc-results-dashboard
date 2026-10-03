@@ -1,9 +1,10 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Feature 3: comments domain logic (storage-agnostic, unit-tested).
+"""Comment rules, without storage.
 
-chart_id set  -> per-plot comment; chart_id None -> dashboard-level ("overall").
-Author always comes from the authenticated identity, never the request body.
+A comment with a chart_id is about that chart; with chart_id None it is about
+the whole dashboard ("overall"). The author always comes from the signed-in
+identity, never from the request body.
 """
 import pytest
 

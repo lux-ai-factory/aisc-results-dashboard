@@ -1,17 +1,15 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""WP11a bridge and WP11b login: who may make a project's dashboard, and who
-may see it.
+"""The bridge and the login role sync: who may make a project's dashboard, and
+who may see it.
 
 The platform calls POST / DELETE /api/v1/aisc_project/<pid> after it provisions
 or before it drops a project. The call carries X-AISC-Bridge-Token, compared
 in constant time with DASHBOARD_BRIDGE_TOKEN. The FAB BaseApi that serves it
-is runtime-only; the decision it applies is `authorize_bridge`, tested here.
+needs Superset; the decision it applies is `authorize_bridge`, tested here.
 
 On login, a member of project P gets AiscProject_<hex> on top of the role the
 realm maps to; the admin keeps Admin.
-
-Rule ids are from docs/superpowers/pipeline-2026-09-23/03-specs.md.
 """
 import hmac
 import importlib
@@ -47,7 +45,7 @@ def projects():
     return _Missing("aisc_ext.projects")
 
 
-# ---- bridge authentication (S11.6) -----------------------------------------
+# ---- bridge authentication -------------------------------------------------
 
 ENV = {"DASHBOARD_BRIDGE_TOKEN": "s3cret-bridge"}
 
@@ -92,7 +90,7 @@ def test_s11_6_bridge_api_resource_name():
     assert found, "no FAB BaseApi with resource_name = \"aisc_project\" in aisc_ext"
 
 
-# ---- login role sync (11b, S11.2 / S11.3) -----------------------------------
+# ---- login role sync -------------------------------------------------------
 
 def test_s11_2_a_member_gets_the_project_role_on_top_of_the_realm_role():
     security = _load("aisc_ext.security")
@@ -122,14 +120,14 @@ def test_s11_2_the_admin_keeps_admin():
 
 
 def test_s11_2_membership_is_read_from_core_project_member(projects):
-    """11b: the subject's projects, over the dashboard_ro connection."""
+    """The subject's projects, read over the dashboard_ro connection."""
     sql = " ".join(projects.MEMBER_PROJECTS_SQL.split()).lower()
     assert "from core.project_member" in sql
     assert "subject" in sql
 
 
 def test_s11_2_the_sso_manager_uses_the_membership():
-    """11b: auth_user_oauth must call roles_for_login, not only map_keycloak_roles."""
+    """auth_user_oauth must call roles_for_login, not only map_keycloak_roles."""
     import pathlib
     text = (pathlib.Path(__file__).resolve().parents[1] / "aisc_ext" / "sso.py").read_text()
     assert "roles_for_login" in text

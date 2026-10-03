@@ -1,8 +1,7 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Branding is resolved from env with AISC as the built-in default tenant, so a
-company rebrands by setting env + mounting a logo (no image rebuild). Pure logic,
-no Superset import -> unit-testable standalone."""
+"""Branding comes from env vars with AISC as the default, so a company rebrands
+by setting them and mounting a logo, without rebuilding the image."""
 from aisc_ext import branding
 
 
@@ -25,7 +24,7 @@ def test_defaults_are_aisc_when_env_empty():
 
 
 def test_empty_or_blank_env_falls_back_to_default():
-    # docker-compose forwards unset .env vars as "" -> must fall back, not blank out
+    # compose passes "" for a variable missing from .env: that must mean the default
     env = {"BRANDING_APP_NAME": "", "BRANDING_PRIMARY": "   ", "BRANDING_LOGO": ""}
     assert branding.app_name(env) == "AI Assessment Sandbox"
     assert branding.app_icon(env) == "/static/assets/branding/aisc/laif_logo.png"

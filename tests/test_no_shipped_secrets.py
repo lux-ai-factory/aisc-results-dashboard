@@ -1,12 +1,10 @@
 """Nothing here may run on a secret that is written in this repository.
 
-A default is not a convenience when the thing it defaults to is a secret: an
-install that does not set the variable runs on a value anyone can read, and
-`SUPERSET_SECRET_KEY` signs this dashboard's session cookies, so holding it
-means minting a session as any user, Admin included. That session now reaches
-the whole platform database through the read-only role.
+A default secret means an install that does not set the variable runs on a
+value anyone can read. `SUPERSET_SECRET_KEY` signs this dashboard's session
+cookies, so whoever holds it can forge a session as any user, Admin included.
 
-So: the config refuses to start without one, and the compose file has no
+So the config refuses to start without it, and the compose file has no
 fallback for it, for the metadata database's password, or for immudb's.
 """
 import re
@@ -42,8 +40,8 @@ def test_no_compose_file_falls_back_to_a_secret(path):
 
 
 def test_the_config_has_no_fallback_secret_key():
-    """`os.environ.get("SUPERSET_SECRET_KEY", "…")` is the same hole one level
-    down: compose can refuse all it likes if the app supplies its own."""
+    """A default in the config (`os.environ.get("SUPERSET_SECRET_KEY", "…")`)
+    would defeat the compose file's refusal."""
     source = (REPO / "superset_config.py").read_text()
     assert 'os.environ.get("SUPERSET_SECRET_KEY"' not in source or \
         'os.environ["SUPERSET_SECRET_KEY"]' in source, \

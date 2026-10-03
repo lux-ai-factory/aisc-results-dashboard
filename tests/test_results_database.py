@@ -1,4 +1,4 @@
-"""The membership DSN the dashboard reads at sign-in (isolation I10.2).
+"""The membership DSN the dashboard reads at sign-in.
 
 The dashboard learns which projects a person is in from core.project_member in
 the platform's `platform` database, and reads nothing else there. It does so
@@ -10,12 +10,6 @@ The DSN comes from the variable the deployment sets rather than from a
 connection someone registers by hand: on a machine running several stacks, a
 hand-typed address can point at another stack's Postgres and appear to work.
 These are the rules that decide what the sign-in may use.
-
-Changed by the isolation (S-D13): these tests pinned AISC_RESULTS_DB_URI and the
-registration of the "AISC Results" connection; they now pin membership_uri and
-AISC_MEMBERSHIP_DB_URI with the same intent. The old fourth test (the connection
-name is stable so re-registering replaces it) is gone with the registration; its
-counterpart is test_isolation_dashboard.py::test_i10_2_results_db_registers_nothing_named_aisc_results.
 """
 import pytest
 
@@ -36,7 +30,6 @@ def test_nothing_is_used_when_nothing_is_configured():
 
 
 def test_a_read_write_role_is_refused():
-    """The dashboard reads. A DSN that could write is a mistake worth failing on
-    rather than carrying into production."""
+    """The dashboard only reads, so a DSN that could write is refused."""
     with pytest.raises(ValueError, match="read-only"):
         membership_uri({"AISC_MEMBERSHIP_DB_URI": "postgresql+psycopg2://platform_rw:x@postgres:5432/platform"})

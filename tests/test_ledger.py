@@ -1,6 +1,6 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""D1-D2 (ledger phase 9): the dashboard's events.
+"""Ledger events for dashboard comments and review requests.
 
 A project's dashboard is ``aisc-<pid hex>``: its slug names the project, which is how an event finds its
 project log (and how the gateway's witness finds the project of the request, from the slug in the path or
@@ -8,7 +8,7 @@ in ``dashboard_id=``). Superset's metadata is not a project database, so the ext
 of its own in it: an event is queued in the same transaction as the comment or review it describes, and
 a sender posts what is queued to the platform's internal route (POST /internal/projects/<pid>/ledger/events,
 X-AISC-Service-Token), once each, until the platform has it. Nothing names who acted: the witnessed request
-does. Pure: no Superset import, the outbox on SQLite."""
+does. No Superset import; the outbox is on SQLite."""
 from __future__ import annotations
 
 import json
@@ -166,8 +166,8 @@ def test_only_the_dashboards_actions_are_built():
 
 @pytest.mark.parametrize("status", [None, 301, 302, 401, 403, 404, 500, 502, 503])
 def test_m3_review_a_fixable_answer_keeps_the_event_for_the_next_pass(engine, status):
-    """A wrong token, an address that isn't the platform's route, a platform down: fixed by the operator, then
-    sent. Kept, and the pass stops there so the order holds."""
+    """A wrong token, a wrong address or a platform that is down is for the operator to fix: the event is
+    kept for a later pass, and this pass stops there so the order holds."""
     with engine.begin() as conn:
         for _ in range(2):
             ledger.emit(conn, PID, "dashboard.comment.created", ledger.comment_created(COMMENT, slug=SLUG, request=REQUEST))

@@ -1,14 +1,14 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Feature 1: map Keycloak realm roles -> Superset (FAB) roles.
+"""Map Keycloak realm roles to Superset (Flask-AppBuilder) roles.
 
 dashboard-admin  -> Admin   (full)
 dashboard-editor -> Alpha   (create/edit charts & dashboards)
 dashboard-viewer -> AiscViewer (view + comment)
-anything else    -> AiscViewer (safe default; never elevate)
+anything else    -> AiscViewer (least privileged)
 
-The viewer used to be Gamma, which also holds can_write on Chart and Dashboard:
-every signed-in account could edit what everybody else reads. See tests/test_roles.py.
+The viewer is not Gamma, which holds can_write on Chart and Dashboard. See
+tests/test_roles.py.
 """
 from aisc_ext.security import VIEWER_ROLE, extract_realm_roles, map_keycloak_roles
 

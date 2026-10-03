@@ -1,9 +1,9 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Feature 2: tamper-evident audit rows for Superset actions -> immudb.
+"""Audit rows for Superset actions, written to immudb.
 
-The pure row-builder is unit-tested here; the immudb client degrades to a no-op
-when disabled/unavailable so auditing never blocks a request.
+The row builder is tested directly; the immudb client does nothing when auditing
+is disabled or immudb is unreachable, so auditing never blocks a request.
 """
 import json
 
@@ -60,8 +60,8 @@ def test_clerk_kwargs_from_env_overrides(monkeypatch):
 
 
 class _FakeClient:
-    """Minimal immudb client double: sqlExec fails on INSERT the first
-    `fail_times` calls with a tx-read-conflict, then succeeds."""
+    """A fake immudb client: the first `fail_times` INSERTs fail with
+    "tx read conflict", later ones succeed."""
     def __init__(self, fail_times=0, exc_msg="tx read conflict"):
         self.fail_times = fail_times
         self.exc_msg = exc_msg

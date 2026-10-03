@@ -1,7 +1,7 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Feature: review requests (assign a comment/review to a person or a
-stakeholder-group category). Storage-agnostic domain logic, unit-tested."""
+"""Review request rules, without storage: a request is assigned to one person
+or to a stakeholder group."""
 import pytest
 
 from aisc_ext.reviews.service import (

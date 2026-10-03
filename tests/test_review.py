@@ -133,7 +133,7 @@ def test_the_author_s_internal_id_is_not_sent_to_the_page():
 
 
 def test_a_reply_filed_under_a_reply_is_shown_in_that_thread():
-    # written through the API before replies were flattened
+    # a reply to a reply, as older rows may have
     rows = [_row(1, None, "u1", "top", "2026-09-23T09:00:00"),
             _row(2, None, "u2", "reply", "2026-09-23T09:10:00", parent=1),
             _row(3, None, "u1", "reply to reply", "2026-09-23T09:20:00", parent=2)]

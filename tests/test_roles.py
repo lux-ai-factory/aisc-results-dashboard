@@ -1,12 +1,11 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Which dashboard role a person gets, from the roles the realm actually has.
+"""Which dashboard role a person gets, from the roles the AISC realm has.
 
-The mapping named roles (dashboard-admin, dashboard-editor, dashboard-viewer)
-that the platform's realm does not define, so everybody fell through to the
-default. The default was Gamma, and Gamma holds can_write on Chart and
-Dashboard: every signed-in account could edit or delete the shared dashboards,
-and the platform's own admin could not administer them.
+The realm defines admin and primary-user, not the dashboard-* roles, so those
+two must map, or every account (the admin included) falls to the default. The
+default is the viewer role, not Gamma: Gamma holds can_write on Chart and
+Dashboard, so every signed-in account could edit or delete the shared dashboards.
 """
 from aisc_ext.security import VIEWER_ROLE, map_keycloak_roles
 
@@ -20,7 +19,7 @@ def test_an_ordinary_account_can_look_and_comment_only():
 
 
 def test_somebody_with_no_roles_at_all_gets_the_viewer_too():
-    """The default has to be the least thing, not the most convenient one."""
+    """The default is the least privileged role."""
     assert map_keycloak_roles([]) == [VIEWER_ROLE]
     assert map_keycloak_roles(None) == [VIEWER_ROLE]
 
@@ -42,8 +41,7 @@ def test_the_most_privileged_match_wins_and_nothing_elevates_beyond_it():
 
 
 def test_what_a_viewer_is_allowed_to_do():
-    """The permissions the role is built from, so a change to it is a change to
-    this list and not a surprise."""
+    """The permissions the role is built from, so changing them means changing this list."""
     from aisc_ext.security import VIEWER_PERMISSIONS, viewer_permissions_from
 
     gamma_like = [
@@ -61,8 +59,7 @@ def test_what_a_viewer_is_allowed_to_do():
 
     assert ("can_read", "Chart") in kept
     assert ("menu_access", "Dashboards") in kept
-    # commenting is the one thing a viewer writes: it is the point of the
-    # review workflow, and it changes nobody's data
+    # comments are the one thing a viewer writes; they change no assessment data
     assert ("can_write", "AiscComment") in kept
     assert ("can_write", "Chart") not in kept
     assert ("can_write", "Dashboard") not in kept
@@ -72,8 +69,7 @@ def test_what_a_viewer_is_allowed_to_do():
 
 
 def test_a_viewer_can_never_reach_sql_lab():
-    """SQL Lab on this instance reads the whole platform database through
-    dashboard_ro: every module's schema, every project."""
+    """SQL Lab would let a viewer query every table a connection can reach."""
     from aisc_ext.security import viewer_permissions_from
 
     for permission in ("can_sqllab", "can_sql_json", "can_execute_sql_query", "can_csv"):
@@ -81,9 +77,8 @@ def test_a_viewer_can_never_reach_sql_lab():
 
 
 # ── building the role inside Superset ────────────────────────────────────────
-# The mapping above says which role a person gets. This says what that role is,
-# and it is derived from what this Superset actually has rather than from a
-# hand-written list that drifts from it.
+# The mapping above says which role a person gets. This says what that role
+# holds: it is derived from the permissions this Superset actually has.
 
 
 class _Named:
