@@ -59,7 +59,7 @@ class FakeStore:
     """What Superset holds, by kind and key. Kinds: database, dataset, role,
     dashboard."""
 
-    KINDS = ("database", "dataset", "role", "dashboard")
+    KINDS = ("database", "dataset", "role", "dashboard", "chart")
 
     def __init__(self):
         self.objects = {k: {} for k in self.KINDS}
@@ -91,7 +91,16 @@ def test_s11_names_are_derived_from_the_pid(projects):
     assert f"controls_answers_{HEX}" in store.items("dataset")
     assert "AISC Controls mcas" in store.items("database")
     assert f"AiscProject_{HEX}" in store.items("role")
-    assert f"aisc-{HEX}" in store.items("dashboard")
+
+
+def test_o2_registration_makes_no_project_dashboard(projects):
+    """Plugin dashboards 2026-10-04 (O2): a project's charts are its plugins' tiles (aisc_ext/plugin_tiles.py),
+    so registration makes no project-wide dashboard of three generic charts any more. One made before stays as
+    it is: people may have added charts to it."""
+    store = FakeStore()
+    _register(projects, store)
+    assert store.items("dashboard") == {}
+    assert not hasattr(projects, "_chart_form") and not hasattr(projects, "native_filter")
 
 
 def test_s11_project_role_name_helper(projects):
@@ -174,114 +183,6 @@ def test_s11_3_the_project_role_reads_its_two_datasets_and_nothing_else(projects
     }
 
 
-def test_s11_2_the_dashboard_is_for_the_project_role_and_has_both_charts(projects):
-    """The dashboard has the project role (DASHBOARD_RBAC), a line by version and a table by version."""
-    store = FakeStore()
-    _register(projects, store)
-    dash = store.items("dashboard")[f"aisc-{HEX}"]
-    assert dash["roles"] == [f"AiscProject_{HEX}"]
-    charts = dash["charts"]
-    assert any(c["kind"] == "line" and c["dataset"] == f"engine_results_{HEX}"
-               and c["by"] == "system_version" for c in charts), charts
-    assert any(c["kind"] == "table" and c["dataset"] == f"controls_answers_{HEX}"
-               and c["by"] == "system_version_number" for c in charts), charts
-
-
-def test_targets_the_dashboard_has_an_average_score_by_target_bar(projects):
-    """A bar of the average score of each metric by target, next to the two charts."""
-    store = FakeStore()
-    _register(projects, store)
-    charts = store.items("dashboard")[f"aisc-{HEX}"]["charts"]
-    assert {"kind": "bar", "dataset": f"engine_results_{HEX}", "by": "target_label", "metric": "score"} in charts
-    assert len(charts) == 3
-
-
-def test_targets_the_bar_chart_is_a_superset_bar_of_avg_score_by_target_per_metric(projects):
-    viz, form = projects._chart_form({"kind": "bar", "dataset": "d", "by": "target_label", "metric": "score"})
-    assert viz == "echarts_timeseries_bar"
-    assert form["x_axis"] == "target_label"
-    assert form["metrics"] == [{"label": "score", "expressionType": "SIMPLE", "aggregate": "AVG",
-                                "column": {"column_name": "score"}}]
-    assert form["groupby"] == ["metric"]
-
-def test_s13_dashboard_is_published_on_registration(projects):
-    """An unpublished dashboard is invisible to every non-admin member
-    (Superset's DashboardAccessFilter requires Dashboard.published), so
-    register_project must publish it."""
-    store = FakeStore()
-    _register(projects, store)
-    dash = store.items("dashboard")[f"aisc-{HEX}"]
-    assert dash["published"] is True
-
-
-def test_s13_supersetstore_publishes_an_existing_unpublished_dashboard_row(monkeypatch):
-    """An existing Dashboard row with published=False is set to True in place on
-    the next registration, keeping its id and its role, not replaced.
-
-    This exercises SupersetStore._upsert_dashboard itself with a stand-in for
-    Superset's ORM: the FakeStore used elsewhere replaces the whole spec on
-    upsert, so it cannot tell "changed in place" from "replaced"."""
-    projects = importlib.import_module("aisc_ext.projects")
-
-    class Row:
-        def __init__(self, **kw):
-            self.__dict__.update(kw)
-
-    role = Row(name=f"AiscProject_{HEX}")
-    dash = Row(id=9, slug=f"aisc-{HEX}", dashboard_title="old", json_metadata="{}",
-               published=False, roles=[], slices=[])
-    rows = {"Dashboard": [dash], "SqlaTable": [], "Slice": []}
-
-    class Query:
-        def __init__(self, items):
-            self.items = items
-
-        def filter_by(self, **kw):
-            return Query([i for i in self.items if all(getattr(i, k, None) == v for k, v in kw.items())])
-
-        def one_or_none(self):
-            return self.items[0] if self.items else None
-
-    class Session:
-        def query(self, model):
-            return Query(rows[model.__name__])
-
-        def add(self, obj):
-            rows["Dashboard"].append(obj)
-
-        def commit(self):
-            pass
-
-    class SecurityManager:
-        def find_role(self, name):
-            return role if name == role.name else None
-
-    Dashboard = type("Dashboard", (Row,), {})
-    Slice = type("Slice", (Row,), {})
-    SqlaTable = type("SqlaTable", (Row,), {})
-    fake = {
-        "superset": types.SimpleNamespace(db=types.SimpleNamespace(session=Session())),
-        "superset.models": types.ModuleType("superset.models"),
-        "superset.models.dashboard": types.SimpleNamespace(Dashboard=Dashboard),
-        "superset.models.slice": types.SimpleNamespace(Slice=Slice),
-        "superset.connectors": types.ModuleType("superset.connectors"),
-        "superset.connectors.sqla": types.ModuleType("superset.connectors.sqla"),
-        "superset.connectors.sqla.models": types.SimpleNamespace(SqlaTable=SqlaTable),
-        "flask": types.SimpleNamespace(
-            current_app=types.SimpleNamespace(appbuilder=types.SimpleNamespace(sm=SecurityManager()))),
-    }
-    for name, module in fake.items():
-        monkeypatch.setitem(sys.modules, name, module)
-
-    projects.SupersetStore().upsert("dashboard", f"aisc-{HEX}", {
-        "aisc_project": PID, "title": "MCAS", "roles": [role.name], "charts": [], "published": True,
-    })
-    assert len(rows["Dashboard"]) == 1
-    assert dash.id == 9
-    assert dash.published is True
-    assert dash.roles == [role]
-
-
 def test_s11_2_dashboard_rbac_is_switched_on():
     """Without DASHBOARD_RBAC, dashboard roles are ignored."""
     import pathlib
@@ -323,10 +224,8 @@ def test_s11_5_unregister_leaves_other_projects_alone(projects):
     _register(projects, store)
     _register(projects, store, pid=OTHER, slug="other", name="Other")
     projects.unregister_project(PID, store=store)
-    assert f"aisc-{OTHER_HEX}" in store.items("dashboard")
     assert f"AiscProject_{OTHER_HEX}" in store.items("role")
     assert "AISC Controls other" in store.items("database")
-    assert f"aisc-{HEX}" not in store.items("dashboard")
     assert "AISC Controls mcas" not in store.items("database")
 
 
@@ -334,3 +233,24 @@ def test_s11_5_unregister_of_an_unknown_project_is_a_no_op(projects):
     store = FakeStore()
     projects.unregister_project(PID, store=store)
     assert all(store.items(k) == {} for k in FakeStore.KINDS)
+
+
+# ---- plugin dashboards 2026-10-04 -------------------------------------------
+
+def test_t3_6_the_results_dataset_carries_the_latest_run_metric(projects):
+    store = FakeStore()
+    _register(projects, store)
+    assert store.items("dataset")[f"engine_results_{HEX}"]["metrics"] == [
+        {"metric_name": "latest_run", "expression": "MAX(run_order)"}]
+    assert "metrics" not in store.items("dataset")[f"controls_answers_{HEX}"]
+
+
+def test_t4_6_unregister_also_removes_the_projects_charts(projects):
+    """Plugin dashboards are tagged like the rest, and their starter charts too (they sit on no dashboard)."""
+    store = FakeStore()
+    _register(projects, store)
+    store.upsert("dashboard", f"aisc-{HEX}-data-monitor-datadriftplugin", {"aisc_project": PID})
+    store.upsert("chart", "starter-uuid", {"aisc_project": PID})
+    store.upsert("chart", "other-project-chart", {"aisc_project": OTHER})
+    projects.unregister_project(PID, store=store)
+    assert store.items("dashboard") == {} and list(store.items("chart")) == ["other-project-chart"]

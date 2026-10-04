@@ -271,7 +271,8 @@ def starter_bundle(*, pid, plugin, label, dataset_uuid, dataset_name, database_u
     params = {"viz_type": "table", "query_mode": "raw",
               "all_columns": [c for c in ("run", "target_label", "metric", "feature", "concern", "score", "statistic",
                                           "p_value", "flag") if c in set(columns)],
-              "adhoc_filters": [_filter("tool", "==", label)], "row_limit": 1000, "aisc_starter": plugin}
+              "adhoc_filters": [_filter("tool", "==", label)], "row_limit": 1000, "aisc_starter": plugin,
+              "aisc_project": pid}
     cid = starter_uuid(pid, plugin)
     files[f"charts/{cid}.yaml"] = _chart_file(
         chart_id=cid, name=f"New chart · {label}", viz_type="table", params=params, dataset_uuid=dataset_uuid,

@@ -72,16 +72,22 @@ def _chart_columns(form: dict) -> set:
     return used
 
 
-def test_t2_every_chart_column_is_declared_on_its_dataset(projects):
+def test_t2_every_column_a_default_chart_can_use_is_declared(projects):
+    """The translator's charts (aisc_ext/charts.py) read only declared columns of engine_results_<hex>, for
+    every chart kind and every dimension a plugin may group or filter by."""
     p = importlib.import_module("aisc_ext.projects")
-    store = FakeStore()
-    _register(projects, store)
-    charts = store.items("dashboard")[f"aisc-{HEX}"]["charts"]
-    assert {c["kind"] for c in charts} == {"line", "table", "bar"}
-    for chart in charts:
-        _viz, form = p._chart_form(chart)
-        missing = _chart_columns(form) - set(_declared(store, chart["dataset"]))
-        assert not missing, f"{chart['kind']} chart uses undeclared columns {missing}"
+    charts = importlib.import_module("aisc_ext.charts")
+    declared = [n for n, _ in p.ENGINE_RESULTS_COLUMNS]
+    dims = list(p.DIMENSION_COLUMNS)
+    for kind in ("bars", "line", "table", "pie", "scatter"):
+        for group in ([], dims):
+            v = {"chart_type": kind, "metrics": ["m"], "group_by_dimensions": group,
+                 "filter_dimensions": {d: ["x"] for d in dims}, "metric_label_dimension": "concern"}
+            _viz, form, _desc = charts.chart_settings(v, plugin_label="P", columns=declared)
+            used = _chart_columns(form) | {f["subject"] for f in form["adhoc_filters"]}
+            if isinstance(form.get("metric"), dict):
+                used.add(form["metric"]["column"]["column_name"])
+            assert used <= set(declared), (kind, used - set(declared))
 
 
 # ── T3 and T4 the Superset store writes them, and never asks Superset ────────

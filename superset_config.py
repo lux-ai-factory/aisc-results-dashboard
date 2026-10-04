@@ -251,6 +251,20 @@ def _install_extension(app):
         from aisc_ext.viewer_role import ensure_viewer_role
 
         ensure_viewer_role(sm, extra_writable_views=("AiscComment", "AiscReviewRequest"))
+
+        # The account the bridge's imports run as (plugin dashboards 2026-10-04): Superset's import runs as a
+        # user and needs the right to create charts and dashboards, hence Admin. Inactive and without a
+        # password, so nobody can sign in with it; only the bridge's token-checked routes act as it.
+        from aisc_ext.projects import BRIDGE_USER
+
+        bridge = sm.find_user(username=BRIDGE_USER)
+        if bridge is None:
+            sm.add_user(BRIDGE_USER, "AISC", "bridge", f"{BRIDGE_USER}@aisc.invalid", [sm.find_role("Admin")])
+            bridge = sm.find_user(username=BRIDGE_USER)
+        if bridge is not None:
+            bridge.roles = [sm.find_role("Admin")]
+            bridge.active = False
+            bridge.password = None
         _grant(sm, _EXTENSION_GRANTS, ("Admin", "Alpha", "Gamma", VIEWER_ROLE))
 
         # One role per stakeholder group, to assign review requests to.

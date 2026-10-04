@@ -226,6 +226,7 @@ def test_the_starter_chart_bundle(charts):
     assert chart["uuid"] == charts.starter_uuid(PID, "data-monitor::DataDriftPlugin")
     assert ("tool", "==") in filters_of(chart["params"])
     assert "aisc_chart_id" not in chart["params"]           # Save as gives the user a chart AISC never touches
+    assert chart["params"]["aisc_project"] == PID           # so unregister finds it (it is on no dashboard)
 
 
 def test_t3_6_before_any_run_the_run_filter_falls_back_to_the_first_value(charts):

@@ -1,6 +1,6 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""One dashboard per platform project.
+"""A platform project's objects in the dashboard.
 
 For project P (hex = its pid without dashes) `register_project` makes, and
 `unregister_project` removes:
@@ -13,10 +13,12 @@ For project P (hex = its pid without dashes) `register_project` makes, and
   filter: the database is the project (isolation I10.1);
 - dataset ``controls_answers_<hex>`` on that connection: the answers with their
   stamp;
-- role ``AiscProject_<hex>``, which may read those two datasets and nothing else;
-- dashboard ``aisc-<hex>``, for that role only: a line of score by
-  system_version, a table of answers by system_version_number and a bar of
-  the average score by target (target_label).
+- role ``AiscProject_<hex>``, which may read those two datasets and nothing else.
+
+Its charts are its plugins' tiles: one dashboard per plugin, made from the plugin's default charts
+(aisc_ext/plugin_tiles.py, aisc_ext/charts.py; plugin dashboards 2026-10-04). Until then a project had one
+dashboard ``aisc-<hex>`` of three generic charts; one made before is left as it is, and unregister still
+removes it with the plugin dashboards.
 
 The module decides what should exist and applies it through a store with three
 methods (``upsert``, ``delete``, ``items``). Superset backs it at runtime
@@ -32,6 +34,7 @@ import os
 import re
 import uuid
 
+from aisc_ext import charts
 from aisc_ext.results_db import READ_ONLY_ROLE
 
 _PID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -40,6 +43,9 @@ _PID_HEX = re.compile(r"[0-9a-f]{32}")
 ROLE_PREFIX = "AiscProject_"
 #: The key every object of a project carries, with the project's pid as value.
 PROJECT_TAG = "aisc_project"
+#: The account the bridge's imports run as (Superset's import records who imports, for owners). Made at start
+#: by superset_config._install_extension, inactive and without a password: nobody signs in with it.
+BRIDGE_USER = "aisc-bridge"
 
 #: The projects a person is in, read at sign-in over AISC_MEMBERSHIP_DB_URI
 #: (dashboard_ro on `platform`, never a Superset connection; see results_db).
@@ -183,7 +189,9 @@ def register_project(pid, slug: str, name: str, *, store, controls_password: str
     # A dataset registered before the isolation sits on "AISC Results"; this
     # upsert moves it onto the project connection and keeps its id (I10.1).
     store.upsert("dataset", engine_ds, {**tag, "database": database, "sql": engine_results_sql(),
-                                        "columns": [list(c) for c in ENGINE_RESULTS_COLUMNS]})
+                                        "columns": [list(c) for c in ENGINE_RESULTS_COLUMNS],
+                                        # the Run filter sorts by it, newest first (aisc_ext/charts.py)
+                                        "metrics": charts.dataset_metrics()})
     store.upsert("dataset", controls_ds, {**tag, "database": database, "sql": controls_answers_sql(),
                                           "columns": [list(c) for c in CONTROLS_ANSWERS_COLUMNS]})
     store.upsert("role", role, {**tag, "permissions": [
@@ -191,36 +199,16 @@ def register_project(pid, slug: str, name: str, *, store, controls_password: str
         ("datasource_access", controls_ds),
         ("database_access", database),
     ]})
-    store.upsert("dashboard", f"aisc-{hex_}", {
-        **tag,
-        "title": name,
-        "roles": [role],
-        # Superset's DashboardAccessFilter shows an unpublished dashboard to
-        # nobody but its owners and admins. This dashboard has no owners
-        # (S11.2/S11.3: DASHBOARD_RBAC and the project role decide who may see
-        # it), so it must be published or every member gets 0 dashboards.
-        # Unconditional, so a project registered before this existed heals on
-        # its next registration pass too.
-        "published": True,
-        # results navigation (2026-10-03): the launcher's buttons open this dashboard with these
-        # set, by their fixed ids (docs/superpowers/results-nav-2026-10-03/01-specs.md R1.2)
-        "filters": [
-            {"id": "NATIVE_FILTER-target", "name": "Target", "dataset": engine_ds, "column": "target_label"},
-            {"id": "NATIVE_FILTER-tool", "name": "Tool", "dataset": engine_ds, "column": "tool"},
-        ],
-        "charts": [
-            {"kind": "line", "dataset": engine_ds, "by": "system_version", "metric": "score"},
-            {"kind": "table", "dataset": controls_ds, "by": "system_version_number"},
-            {"kind": "bar", "dataset": engine_ds, "by": "target_label", "metric": "score"},
-        ],
-    })
+    # No project-wide dashboard any more (plugin dashboards 2026-10-04, O2): a project's charts are its
+    # plugins' tiles (aisc_ext/plugin_tiles.py). One made before is left as it is.
 
 
 def unregister_project(pid, *, store) -> None:
     """Remove every dashboard object of the project; an unknown project is a no-op."""
     pid = _pid(pid)
-    # the dashboard first, then what it reads, then who may read it
-    for kind in ("dashboard", "dataset", "database", "role"):
+    # the dashboards first (their charts with them), then the charts on none (the plugins' starters), then
+    # what they read, then who may read it
+    for kind in ("dashboard", "chart", "dataset", "database", "role"):
         for key, spec in list(store.items(kind).items()):
             if spec.get(PROJECT_TAG) == pid:
                 store.delete(kind, key)
@@ -236,36 +224,6 @@ def authorize_bridge(headers, env) -> int | None:
     if not expected or not hmac.compare_digest(given, expected):
         return 401
     return None
-
-
-def native_filter(spec: dict, *, dataset_id: int, excluded: list) -> dict:
-    """One single-select dashboard filter on a column of a dataset, in the shape Superset writes a
-    `filter_select` itself (superset/migrations/shared/native_filters.py), with no default value;
-    `excluded` are the charts it does not apply to."""
-    return {
-        "id": spec["id"], "name": spec["name"], "type": "NATIVE_FILTER", "filterType": "filter_select",
-        "targets": [{"datasetId": dataset_id, "column": {"name": spec["column"]}}],
-        "controlValues": {"enableEmptyFilter": False, "defaultToFirstItem": False, "multiSelect": False,
-                          "searchAllOptions": False, "inverseSelection": False},
-        "defaultDataMask": {"extraFormData": {}, "filterState": {}, "ownState": {}},
-        "cascadeParentIds": [], "scope": {"rootPath": ["ROOT_ID"], "excluded": list(excluded)},
-        "description": "",
-    }
-
-
-def _chart_form(chart) -> tuple[str, dict]:
-    """The Superset viz type and form data for one chart of a project dashboard:
-    a line or a bar of the average metric along ``by`` (one series per metric), or a raw table of
-    the answers."""
-    if chart["kind"] in ("line", "bar"):
-        return f"echarts_timeseries_{chart['kind']}", {
-            "x_axis": chart["by"],
-            "metrics": [{"label": chart["metric"], "expressionType": "SIMPLE", "aggregate": "AVG",
-                         "column": {"column_name": chart["metric"]}}],
-            "groupby": ["metric"],
-        }
-    columns = [chart["by"], "title", "text", "answer", "score"]
-    return "table", {"groupby": columns, "query_mode": "raw", "all_columns": list(columns)}
 
 
 class SupersetStore:
@@ -354,6 +312,20 @@ class SupersetStore:
         session.flush()
         if spec.get("columns"):
             self._sync_columns(found, spec["columns"])
+        if spec.get("metrics"):
+            self._sync_metrics(found, spec["metrics"])
+
+    @staticmethod
+    def _sync_metrics(dataset, declared) -> None:
+        """The dataset's saved metrics: each declared one made or brought up to date by name; others kept."""
+        from superset.connectors.sqla.models import SqlMetric  # type: ignore
+
+        existing = {m.metric_name: m for m in dataset.metrics}
+        for spec in declared:
+            metric = existing.get(spec["metric_name"]) or SqlMetric(metric_name=spec["metric_name"])
+            metric.expression = spec["expression"]
+            if spec["metric_name"] not in existing:
+                dataset.metrics.append(metric)
 
     @staticmethod
     def _sync_columns(dataset, declared) -> None:
@@ -429,43 +401,6 @@ class SupersetStore:
         return out
 
     # ---- dashboards ------------------------------------------------------
-    def _upsert_dashboard(self, key, spec):
-        from superset.connectors.sqla.models import SqlaTable  # type: ignore
-        from superset.models.dashboard import Dashboard  # type: ignore
-        from superset.models.slice import Slice  # type: ignore
-
-        sm, session = self._sm(), self._db().session
-        found = session.query(Dashboard).filter_by(slug=key).one_or_none()
-        if found is None:
-            found = Dashboard(slug=key)
-            session.add(found)
-        found.dashboard_title = spec.get("title") or key
-        found.published = bool(spec.get("published"))
-        found.roles = [r for r in (sm.find_role(name) for name in spec["roles"]) if r is not None]
-        slices = []
-        for chart in spec["charts"]:
-            table = session.query(SqlaTable).filter_by(table_name=chart["dataset"]).one_or_none()
-            if table is None:
-                continue
-            name = f"{key} {chart['kind']} by {chart['by']}"
-            piece = session.query(Slice).filter_by(slice_name=name).one_or_none() or Slice(slice_name=name)
-            piece.viz_type, params = _chart_form(chart)
-            piece.datasource_type = "table"
-            piece.datasource_id = table.id
-            piece.params = json.dumps({**params, "datasource": f"{table.id}__table"})
-            session.add(piece)
-            slices.append(piece)
-        found.slices = slices
-        if hasattr(session, "flush"):
-            session.flush()                 # a new chart gets its id, which a filter's scope names
-        natives = []
-        for f in spec.get("filters", []):
-            table = session.query(SqlaTable).filter_by(table_name=f["dataset"]).one_or_none()
-            if table is None:
-                continue
-            excluded = [s.id for s in slices if s.datasource_id != table.id]
-            natives.append(native_filter(f, dataset_id=table.id, excluded=excluded))
-        found.json_metadata = json.dumps({PROJECT_TAG: spec[PROJECT_TAG], "native_filter_configuration": natives})
 
     def _delete_dashboard(self, key):
         from superset.models.dashboard import Dashboard  # type: ignore
@@ -481,3 +416,125 @@ class SupersetStore:
 
         dashboards = (d for d in self._db().session.query(Dashboard) if d.slug)
         return self._tagged(dashboards, lambda d: d.slug)
+
+    # ---- charts on no dashboard (the plugins' starter charts) ---------------
+    def _items_chart(self):
+        from superset.models.slice import Slice  # type: ignore
+
+        out = {}
+        for piece in self._db().session.query(Slice):
+            try:
+                params = json.loads(piece.params or "{}")
+            except ValueError:
+                continue
+            if PROJECT_TAG in params:
+                out[str(piece.uuid)] = {PROJECT_TAG: params[PROJECT_TAG]}
+        return out
+
+    def _delete_chart(self, key):
+        from superset.models.slice import Slice  # type: ignore
+
+        for piece in self._db().session.query(Slice).filter_by(uuid=uuid.UUID(key)):
+            self._db().session.delete(piece)
+
+    # ---- plugin tiles (aisc_ext/plugin_tiles.py): what a sync reads and writes ----
+    def source(self, pid):
+        """The project's connection and results dataset, as the bundle names them; None if not registered."""
+        from superset.connectors.sqla.models import SqlaTable  # type: ignore
+
+        dataset = self._db().session.query(SqlaTable).filter_by(table_name=f"engine_results_{_hex(pid)}").one_or_none()
+        if dataset is None or dataset.database is None:
+            return None
+        database = dataset.database
+        return {"dataset_uuid": str(dataset.uuid), "dataset_name": dataset.table_name,
+                "database_uuid": str(database.uuid), "database_name": database.database_name,
+                # with the password masked: Superset never overwrites a connection on import (02-p0-findings)
+                "sqlalchemy_uri": database.sqlalchemy_uri, "columns": [c.column_name for c in dataset.columns]}
+
+    def latest_run(self, pid, label):
+        """The plugin's latest run in the project, named as the dataset names it; None before any run."""
+        from sqlalchemy import text  # type: ignore
+        from superset.connectors.sqla.models import SqlaTable  # type: ignore
+
+        dataset = self._db().session.query(SqlaTable).filter_by(table_name=f"engine_results_{_hex(pid)}").one_or_none()
+        if dataset is None:
+            return None
+        query = text(f"SELECT run FROM ({engine_results_sql()}) t WHERE tool = :label ORDER BY run_order DESC LIMIT 1")
+        with dataset.database.get_sqla_engine() as engine, engine.connect() as conn:
+            row = conn.execute(query, {"label": label}).first()
+        return row[0] if row else None
+
+    def chart_id(self, chart_uuid):
+        from superset.models.slice import Slice  # type: ignore
+
+        piece = self._db().session.query(Slice).filter_by(uuid=uuid.UUID(chart_uuid)).one_or_none()
+        return piece.id if piece else None
+
+    def dashboard_state(self, slug):
+        """{"position", "charts": [{"id", "uuid", "aisc"}]} of a dashboard, or None. aisc: made by a sync."""
+        from superset.models.dashboard import Dashboard  # type: ignore
+
+        found = self._db().session.query(Dashboard).filter_by(slug=slug).one_or_none()
+        if found is None:
+            return None
+        out = []
+        for piece in found.slices:
+            try:
+                params = json.loads(piece.params or "{}")
+            except ValueError:
+                params = {}
+            out.append({"id": piece.id, "uuid": str(piece.uuid), "aisc": "aisc_chart_id" in params})
+        return {"position": json.loads(found.position_json or "{}"), "charts": out}
+
+    def link_charts(self, slug, chart_uuids):
+        """Every chart of the layout on the dashboard: Superset's import stops linking at the first chart of
+        the layout that is not in its bundle (02-p0-findings), so the bridge does it."""
+        from superset.models.dashboard import Dashboard  # type: ignore
+        from superset.models.slice import Slice  # type: ignore
+
+        session = self._db().session
+        found = session.query(Dashboard).filter_by(slug=slug).one()
+        have = {s.id for s in found.slices}
+        wanted = session.query(Slice).filter(Slice.uuid.in_([uuid.UUID(u) for u in chart_uuids])).all()
+        found.slices = list(found.slices) + [s for s in wanted if s.id not in have]
+        session.commit()
+
+    def delete_charts(self, chart_uuids):
+        """Defaults a new plugin version dropped. Only charts a sync made: a person's chart is never deleted,
+        whatever is asked."""
+        from superset.models.slice import Slice  # type: ignore
+
+        session = self._db().session
+        for key in chart_uuids:
+            piece = session.query(Slice).filter_by(uuid=uuid.UUID(key)).one_or_none()
+            if piece is not None and "aisc_chart_id" in json.loads(piece.params or "{}"):
+                session.delete(piece)
+        session.commit()
+
+    def set_dashboard_roles(self, slug, roles):
+        from superset.models.dashboard import Dashboard  # type: ignore
+
+        found = self._db().session.query(Dashboard).filter_by(slug=slug).one()
+        found.roles = [r for r in (self._sm().find_role(name) for name in roles) if r is not None]
+        self._db().session.commit()
+
+    # ---- the importer: Superset's own import, as the bridge's service account ----
+    def _as_bridge(self, command):
+        from flask import g  # type: ignore
+
+        before = getattr(g, "user", None)
+        g.user = self._sm().find_user(username=BRIDGE_USER)
+        try:
+            command.run()
+        finally:
+            g.user = before
+
+    def import_charts(self, files):
+        from superset.commands.chart.importers.dispatcher import ImportChartsCommand  # type: ignore
+
+        self._as_bridge(ImportChartsCommand(files, overwrite=True))
+
+    def import_dashboard(self, files):
+        from superset.commands.dashboard.importers.dispatcher import ImportDashboardsCommand  # type: ignore
+
+        self._as_bridge(ImportDashboardsCommand(files, overwrite=True))

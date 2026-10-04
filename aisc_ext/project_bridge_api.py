@@ -1,9 +1,11 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""The dashboard bridge: POST and DELETE /api/v1/aisc_project/<pid>.
+"""The dashboard bridge: POST and DELETE /api/v1/aisc_project/<pid>, PUT /api/v1/aisc_project/<pid>/plugins.
 
 The platform calls POST after it creates a project and DELETE before it drops
 one; they create or remove that project's dashboard objects (aisc_ext.projects).
+PUT .../plugins makes or updates one plugin's tile from its default charts
+(aisc_ext.plugin_tiles; plugin dashboards 2026-10-04).
 The call is authenticated by the X-AISC-Bridge-Token header, not by a session
 cookie, so it is exempt from CSRF. Imported only inside Superset."""
 import os
@@ -11,6 +13,7 @@ import os
 from flask import request
 from flask_appbuilder.api import BaseApi, expose
 
+from aisc_ext.plugin_tiles import plugin_request, sync_plugin
 from aisc_ext.projects import SupersetStore, authorize_bridge, register_project, unregister_project
 
 
@@ -50,3 +53,20 @@ class ProjectBridgeApi(BaseApi):
         except ValueError as exc:
             return self.response_400(message=str(exc))
         return self.response(200, message="unregistered")
+
+    @expose("/<pid>/plugins", methods=["PUT"])
+    def sync_plugin_tile(self, pid):
+        """Body: {plugin, label, version, project_name, visualizations}. 200 {slug, charts}; 400 what is wrong;
+        404 a project the dashboard does not know."""
+        if (refused := self._refused()) is not None:
+            return refused
+        try:
+            req = plugin_request(request.get_json(silent=True) or {})
+            store = SupersetStore()
+            out = sync_plugin(pid, req["project_name"], req["plugin"], req["label"], req["version"],
+                              req["visualizations"], store=store, importer=store)
+        except LookupError as exc:
+            return self.response_404(message=str(exc))
+        except ValueError as exc:
+            return self.response_400(message=str(exc))
+        return self.response(200, **out)
