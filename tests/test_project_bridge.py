@@ -176,3 +176,47 @@ def test_t5_4_owners_and_editors_own_their_plugin_dashboards_and_a_former_editor
     assert add == ["aisc-p-drift"] and remove == ["aisc-o-drift"]
     add, remove = security.ownership_changes([], dashboards)
     assert add == [] and remove == ["aisc-o-drift", "aisc-p-langbite"]
+
+
+# ---- one sign-in for both paths (the gateway's and OAuth's), 2026-10-05 -------
+# The stack signs people in through the gateway (dashboard-gateway/superset_gateway_config.py), not OAuth: the
+# proof of 2026-10-05 found the ownership step only on the OAuth path, so editors never owned their tiles.
+
+class _FakeSM:
+    def __init__(self):
+        self.updated = []
+
+    def find_role(self, name):
+        return f"role:{name}"
+
+    def update_user(self, user):
+        self.updated.append(user)
+
+
+def test_t5_4_sign_in_sets_the_roles_then_the_ownership():
+    security = _load("aisc_ext.security")
+    sm, user, owned = _FakeSM(), type("U", (), {"roles": []})(), []
+    security.apply_sign_in(sm, user, ["primary-user"], [(PID, "editor")],
+                           sync_ownership=lambda u, m: owned.append((u, m)))
+    assert user.roles == [f"role:{security.VIEWER_ROLE}", f"role:AiscProject_{HEX}", f"role:AiscProjectEditor_{HEX}"]
+    assert sm.updated == [user] and owned == [(user, [(PID, "editor")])]
+
+
+def test_t5_4_an_ownership_failure_never_blocks_a_sign_in():
+    security = _load("aisc_ext.security")
+
+    def broken(u, m):
+        raise RuntimeError("the metadata database is down")
+    user = type("U", (), {"roles": [], "username": "u"})()
+    security.apply_sign_in(_FakeSM(), user, ["primary-user"], [(PID, "editor")], sync_ownership=broken)
+    assert user.roles                                   # signed in, with the roles
+
+
+def test_t5_4_both_sign_in_paths_use_it():
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[1]
+    assert "apply_sign_in(" in (root / "aisc_ext" / "sso.py").read_text()
+    gateway = root.parents[1] / "dashboard-gateway" / "superset_gateway_config.py"
+    if gateway.exists():                                # in the aisc checkout
+        text = gateway.read_text()
+        assert "apply_sign_in(" in text and "sync_ownership=self._sync_dashboard_ownership" in text

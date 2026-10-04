@@ -4,7 +4,7 @@
 
 Reads the Keycloak userinfo and, at each login, sets the user's Flask-AppBuilder
 roles from their Keycloak realm roles and project memberships, using
-security.roles_for_login. Imported only inside Superset."""
+security.apply_sign_in (roles, then the plugin dashboards an owner or editor owns). Imported only inside Superset."""
 import logging
 import os
 
@@ -12,7 +12,7 @@ from superset.security import SupersetSecurityManager  # type: ignore
 
 from aisc_ext.projects import MEMBER_PROJECTS_SQL
 from aisc_ext.results_db import membership_uri
-from aisc_ext.security import ownership_changes, roles_for_login
+from aisc_ext.security import apply_sign_in, ownership_changes
 
 log = logging.getLogger(__name__)
 
@@ -71,14 +71,9 @@ class KeycloakSecurityManager(SupersetSecurityManager):
         if user is None:
             return None
         memberships = self._member_projects(userinfo.get("subject"))
-        desired = roles_for_login(userinfo.get("realm_roles", []), memberships)
-        user.roles = [self.find_role(r) for r in desired if self.find_role(r)]
-        self.update_user(user)
-        log.info("Synced %s -> %s", user.username, desired)
-        try:
-            self._sync_dashboard_ownership(user, memberships)
-        except Exception:                                          # noqa: BLE001 - never block a sign-in
-            log.warning("plugin dashboard owners not synced for %s", user.username, exc_info=True)
+        apply_sign_in(self, user, userinfo.get("realm_roles", []), memberships,
+                      sync_ownership=self._sync_dashboard_ownership)
+        log.info("Synced %s -> %s", user.username, [r.name for r in user.roles])
         return user
 
     def _sync_dashboard_ownership(self, user, memberships):

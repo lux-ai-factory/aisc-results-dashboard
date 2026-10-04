@@ -116,6 +116,25 @@ def roles_for_login(realm_roles: list[str], memberships) -> list[str]:
     return out
 
 
+def apply_sign_in(sm, user, realm_roles, memberships, *, sync_ownership=None) -> None:
+    """What every sign-in does, whichever way the person came (the gateway's token or OAuth): the roles
+    (roles_for_login), then, for owners and editors, ownership of their projects' plugin dashboards. Both
+    paths call this one function: on 2026-10-05 the ownership step sat on the OAuth path only, and the stack
+    signs people in through the gateway. An ownership failure is logged, never blocks the sign-in."""
+    import logging
+
+    desired = roles_for_login(realm_roles, memberships)
+    user.roles = [sm.find_role(r) for r in desired if sm.find_role(r)]
+    sm.update_user(user)
+    if sync_ownership is None:
+        return
+    try:
+        sync_ownership(user, memberships)
+    except Exception:                                          # noqa: BLE001 - never block a sign-in
+        logging.getLogger(__name__).warning("plugin dashboard owners not synced for %s",
+                                            getattr(user, "username", "?"), exc_info=True)
+
+
 def ownership_changes(memberships, dashboards) -> tuple[list[str], list[str]]:
     """Which plugin dashboards to make the person an owner of, and which to remove them from.
 
