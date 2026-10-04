@@ -158,6 +158,9 @@ if os.environ.get("AISC_OAUTH") == "1":
 _EXTENSION_GRANTS = {
     "CommentApi": ("can_list", "can_threads", "can_post", "can_delete"),
     "AiscReviewView": ("can_list", "can_show"),
+    # plugin dashboards 2026-10-04: the page is open to every role; importing takes owning the tile
+    "AiscChartImportView": ("can_form", "can_upload"),
+    "Import charts": ("menu_access",),
     "Review dashboards": ("menu_access",),
     "ReviewRequestApi": ("can_list", "can_post", "can_patch", "can_assignees"),
 }
@@ -210,6 +213,7 @@ def _install_extension(app):
     from aisc_ext.reviews.service import STAKEHOLDER_GROUPS
     from aisc_ext.reviews.views import AiscReviewRequestView
     from aisc_ext.review.views import AiscReviewView
+    from aisc_ext.import_view import AiscChartImportView
     from superset import db
     appbuilder = app.appbuilder
     sm = appbuilder.sm
@@ -224,6 +228,7 @@ def _install_extension(app):
             (AiscReviewView, "Review dashboards", "fa-comment-dots"),
             (AiscCommentView, "Comments", "fa-comments"),
             (AiscReviewRequestView, "Review Requests", "fa-clipboard-check"),
+            (AiscChartImportView, "Import charts", "fa-file-import"),
         ):
             appbuilder.add_view(view, name, category="Assessment", icon=icon)
         for model in (AiscComment, AiscReviewRequest):
