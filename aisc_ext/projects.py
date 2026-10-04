@@ -56,6 +56,13 @@ MEMBER_PROJECTS_SQL = "SELECT project_id FROM core.project_member WHERE subject 
 #: target_status: 'unassigned' (the run has no ``target`` input, as every evaluation made before
 #: targets), 'not a target' (its component is no mirror), 'stale' (a component the latest card no
 #: longer lists), else 'current'. target_label is never NULL, so no chart shows an empty label.
+#: The dimensions plugins write (plugin dashboards, 2026-10-04): each key a column of its own, so a
+#: chart can group by it. Text keys as they are; statistic and p_value are numbers sent as strings
+#: (the engine takes no floats in dimensions), cast back here, NULL when not a number ("nan").
+DIMENSION_COLUMNS = ("feature", "concern", "flag", "language", "input_type", "reflection_type", "model")
+NUMERIC_DIMENSION_COLUMNS = ("statistic", "p_value")
+NUMBER_PATTERN = r"^[-+]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][-+]?[0-9]+)?$"
+
 _ENGINE_RESULTS_SQL = """
 SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
        e.pid AS evaluation_pid, e.created_at AS evaluated_at,
@@ -69,7 +76,12 @@ SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
             WHEN t.kind = 'component'
                  AND t.last_card_number < (SELECT max(number) FROM project.system) THEN 'stale'
             ELSE 'current' END AS target_status,
-       COALESCE(p.display_name, p.name, 'unknown') AS tool
+       COALESCE(p.display_name, p.name, 'unknown') AS tool,
+       -- the run as people name it: its number among the project's evaluations, and when it ran
+       'Run ' || dense_rank() OVER (ORDER BY e.created_at, e.id) || ' · ' ||
+           to_char(e.created_at, 'DD Mon YYYY, HH24:MI') AS run,
+       dense_rank() OVER (ORDER BY e.created_at, e.id) AS run_order,
+       {dimensions}
   FROM engine.aisc_backend_measurement m
   JOIN engine.aisc_backend_observation o ON o.id = m.observation_id
   JOIN engine.aisc_backend_evaluation e ON e.id = o.evaluation_id
@@ -84,6 +96,10 @@ SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
   LEFT JOIN engine.aisc_backend_aicomponent tc ON tc.id = ti.component_id
   LEFT JOIN target.target t ON t.engine_component = tc.pid
 """
+_ENGINE_RESULTS_SQL = _ENGINE_RESULTS_SQL.replace("{dimensions}", ",\n       ".join(
+    [f"m.dimensions->>'{key}' AS {key}" for key in DIMENSION_COLUMNS]
+    + [f"CASE WHEN m.dimensions->>'{key}' ~ '{NUMBER_PATTERN}' THEN (m.dimensions->>'{key}')::double precision "
+       f"END AS {key}" for key in NUMERIC_DIMENSION_COLUMNS]))
 
 _CONTROLS_ANSWERS_SQL = """
 SELECT c.title, q.text, a.answer, a.score, a.system_version_number, a.answered_at,
@@ -106,7 +122,8 @@ ENGINE_RESULTS_COLUMNS = (
     ("evaluated_at", "DATETIMETZ"), ("system_version_pid", "STRING"), ("system_version", "INTEGER"),
     ("target_key", "STRING"), ("target_kind", "STRING"), ("target_component_kind", "STRING"),
     ("target_label", "STRING"), ("target_status", "STRING"), ("tool", "STRING"),
-)
+    ("run", "STRING"), ("run_order", "INTEGER"),
+) + tuple((key, "STRING") for key in DIMENSION_COLUMNS) + tuple((key, "FLOAT") for key in NUMERIC_DIMENSION_COLUMNS)
 CONTROLS_ANSWERS_COLUMNS = (
     ("title", "STRING"), ("text", "STRING"), ("answer", "STRING"), ("score", "INTEGER"),
     ("system_version_number", "INTEGER"), ("answered_at", "DATETIMETZ"), ("label", "STRING"),

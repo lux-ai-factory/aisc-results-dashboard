@@ -24,9 +24,11 @@ def test_r1_1_engine_results_name_the_tool_never_null():
     assert "COALESCE(p.display_name, p.name, 'unknown') AS tool" in " ".join(sql.split())
 
 
-def test_r1_1_the_tool_column_is_declared_last_as_a_string():
+def test_r1_1_the_tool_column_is_declared_after_the_target_ones_as_a_string():
+    """Last until 2026-10-04, when the run and the plugins' dimensions came after it (plugin dashboards T2.1)."""
     columns = projects().ENGINE_RESULTS_COLUMNS
-    assert columns[-1] == ("tool", "STRING")
+    names = [n for n, _ in columns]
+    assert ("tool", "STRING") in columns and names.index("tool") == names.index("target_status") + 1
 
 
 # ── R1.2 the two filters in the dashboard spec ──────────────────────────────

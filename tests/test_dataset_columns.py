@@ -34,7 +34,8 @@ def test_t1_both_datasets_are_registered_with_their_declared_columns(projects):
     assert _declared(store, ENGINE) == ["pid", "score", "unit", "time", "dimensions", "metric", "evaluation_pid",
                                         "evaluated_at", "system_version_pid", "system_version", "target_key",
                                         "target_kind", "target_component_kind", "target_label", "target_status",
-                                        "tool"]
+                                        "tool", "run", "run_order", "feature", "concern", "flag", "language",
+                                        "input_type", "reflection_type", "model", "statistic", "p_value"]
     assert _declared(store, CONTROLS) == ["title", "text", "answer", "score", "system_version_number",
                                           "answered_at", "label", "submission_version"]
 
@@ -46,7 +47,11 @@ def test_t1_the_types_are_the_ones_superset_itself_infers():
         "metric": "STRING", "evaluation_pid": "STRING", "evaluated_at": "DATETIMETZ",
         "system_version_pid": "STRING", "system_version": "INTEGER", "target_key": "STRING",
         "target_kind": "STRING", "target_component_kind": "STRING", "target_label": "STRING",
-        "target_status": "STRING", "tool": "STRING"}   # tool: results navigation 2026-10-03
+        "target_status": "STRING", "tool": "STRING",   # tool: results navigation 2026-10-03
+        # plugin dashboards 2026-10-04 (T2.1): the run as people name it, and the plugins' dimensions
+        "run": "STRING", "run_order": "INTEGER", "feature": "STRING", "concern": "STRING", "flag": "STRING",
+        "language": "STRING", "input_type": "STRING", "reflection_type": "STRING", "model": "STRING",
+        "statistic": "FLOAT", "p_value": "FLOAT"}
     assert dict(p.CONTROLS_ANSWERS_COLUMNS) == {
         "title": "STRING", "text": "STRING", "answer": "STRING", "score": "INTEGER",
         "system_version_number": "INTEGER", "answered_at": "DATETIMETZ", "label": "STRING",
@@ -210,3 +215,27 @@ def test_t6_registering_twice_gives_the_same_columns(projects):
     first = store.items("dataset")
     _register(projects, store)
     assert store.items("dataset") == first
+
+
+# ── plugin dashboards 2026-10-04, T2.2: the run and the dimensions in the SQL ──
+
+def test_t2_2_the_run_is_numbered_in_order_of_the_evaluations_and_named_with_its_time():
+    p = importlib.import_module("aisc_ext.projects")
+    sql = " ".join(p.engine_results_sql().split())
+    assert "dense_rank() OVER (ORDER BY e.created_at, e.id) AS run_order" in sql
+    assert ("'Run ' || dense_rank() OVER (ORDER BY e.created_at, e.id) || ' · ' || "
+            "to_char(e.created_at, 'DD Mon YYYY, HH24:MI') AS run") in sql
+    assert " WHERE " not in sql.split("FROM", 1)[1]          # test_s11_4: the database is the project
+
+
+def test_t2_2_each_dimension_column_reads_its_key_and_the_numbers_are_cast():
+    p = importlib.import_module("aisc_ext.projects")
+    sql = " ".join(p.engine_results_sql().split())
+    for key in ("feature", "concern", "flag", "language", "input_type", "reflection_type", "model"):
+        assert f"m.dimensions->>'{key}' AS {key}" in sql, key
+    for key in ("statistic", "p_value"):
+        assert (f"CASE WHEN m.dimensions->>'{key}' ~ '{p.NUMBER_PATTERN}' "
+                f"THEN (m.dimensions->>'{key}')::double precision END AS {key}") in sql, key
+    assert p.DIMENSION_COLUMNS == ("feature", "concern", "flag", "language", "input_type", "reflection_type",
+                                   "model")
+    assert p.NUMERIC_DIMENSION_COLUMNS == ("statistic", "p_value")

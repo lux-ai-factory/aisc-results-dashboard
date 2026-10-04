@@ -475,6 +475,35 @@ def test_targets_two_plugins_of_one_evaluation_each_get_their_own_target(seeded,
 def test_targets_the_declared_columns_hold_on_a_project_with_targets(seeded, projects):
     seeded.need("targets")
     got = _result_columns(projects.engine_results_sql(), seeded.r_db)
-    assert got[-5:] == [("target_key", "text"), ("target_kind", "text"), ("target_component_kind", "text"),
-                        ("target_label", "text"), ("target_status", "text")]
+    targets = [c for c in got if c[0].startswith("target_")]   # no longer last since 2026-10-04 (T2.1)
+    assert targets == [("target_key", "text"), ("target_kind", "text"), ("target_component_kind", "text"),
+                       ("target_label", "text"), ("target_status", "text")]
     assert [n for n, _ in got] == [n for n, _ in projects.ENGINE_RESULTS_COLUMNS]
+
+
+# ── plugin dashboards 2026-10-04, T2.3: two runs with the plugins' dimensions, for real ──
+
+def test_t2_3_runs_are_numbered_and_named_and_dimensions_become_columns(seeded, projects):
+    seeded.need("project")
+    psql("""
+SET ROLE engine_rw;
+SET search_path = engine;
+INSERT INTO aisc_backend_metric (pid, name) VALUES (gen_random_uuid(), 'psi_t23');
+INSERT INTO aisc_backend_evaluation (pid, status, project_id, system_id, created_at)
+  SELECT gen_random_uuid(), 'Finished', id, NULL, ts FROM aisc_backend_project,
+         (VALUES (timestamptz '2001-10-04 18:07:00+00'), (timestamptz '2001-10-04 20:39:00+00')) v(ts);
+INSERT INTO aisc_backend_observation (pid, evaluation_id)
+  SELECT gen_random_uuid(), id FROM aisc_backend_evaluation WHERE created_at < '2002-01-01';
+INSERT INTO aisc_backend_measurement (pid, time, score, metric_id, observation_id, dimensions)
+  SELECT gen_random_uuid(), now(), 1, (SELECT id FROM aisc_backend_metric WHERE name = 'psi_t23'), o.id,
+         jsonb_build_object('feature', 'target.score', 'statistic', '1.754', 'p_value', 'nan', 'flag', 'no')
+    FROM aisc_backend_observation o JOIN aisc_backend_evaluation e ON e.id = o.evaluation_id
+   WHERE e.created_at < '2002-01-01';
+""", db=seeded.db)
+    sql = projects.engine_results_sql()
+    out = psql(f"SET TIME ZONE 'UTC'; SELECT run, run_order, feature, flag, statistic, p_value FROM ({sql}) t "
+               f"WHERE metric = 'psi_t23' ORDER BY run_order;", db=seeded.db, user="dashboard_ro")
+    rows = [r for r in _rows(out) if len(r) == 6]
+    assert [r[0] for r in rows] == ["Run 1 · 04 Oct 2001, 18:07", "Run 2 · 04 Oct 2001, 20:39"]
+    assert [r[1] for r in rows] == ["1", "2"]                 # the older evaluations of 2001 come first
+    assert all(r[2] == "target.score" and r[3] == "no" and r[4] == "1.754" and r[5] == "" for r in rows)
