@@ -382,6 +382,7 @@ def test_s11_2_member_projects_sql_as_dashboard_ro(seeded, projects):
     sql = projects.MEMBER_PROJECTS_SQL.replace("%(subject)s", "'sub-alice'").replace("%s", "'sub-alice'")
     out = psql(sql + ";", user="dashboard_ro")
     assert [r[0] for r in _rows(out)] == [P]
+    assert [r[1] for r in _rows(out)] == ["viewer"]        # with the rank (plugin dashboards 2026-10-04, T5.1)
     sql_none = projects.MEMBER_PROJECTS_SQL.replace("%(subject)s", "'nobody'").replace("%s", "'nobody'")
     assert _rows(psql(sql_none + ";", user="dashboard_ro")) == []
 

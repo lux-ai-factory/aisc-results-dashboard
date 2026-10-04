@@ -41,6 +41,11 @@ _PID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 _PID_HEX = re.compile(r"[0-9a-f]{32}")
 
 ROLE_PREFIX = "AiscProject_"
+#: An owner's or editor's second project role: it may write charts and dashboards (plugin dashboards
+#: 2026-10-04). What they read stays the project role's datasets, so a chart they build shows only their
+#: project; which dashboards they may change is decided by ownership, given at sign-in (aisc_ext/sso.py).
+EDITOR_ROLE_PREFIX = "AiscProjectEditor_"
+EDITOR_PERMISSIONS = (("can_write", "Chart"), ("can_write", "Dashboard"))
 #: The key every object of a project carries, with the project's pid as value.
 PROJECT_TAG = "aisc_project"
 #: The account the bridge's imports run as (Superset's import records who imports, for owners). Made at start
@@ -50,7 +55,7 @@ BRIDGE_USER = "aisc-bridge"
 #: The projects a person is in, read at sign-in over AISC_MEMBERSHIP_DB_URI
 #: (dashboard_ro on `platform`, never a Superset connection; see results_db).
 #: No trailing semicolon: callers may wrap or append.
-MEMBER_PROJECTS_SQL = "SELECT project_id FROM core.project_member WHERE subject = %(subject)s"
+MEMBER_PROJECTS_SQL = "SELECT project_id, role FROM core.project_member WHERE subject = %(subject)s"
 
 #: Each measurement's target is its own plugin run's: an evaluation may run several plugins, each
 #: with its own inputs, and the engine names an observation's plugin only in ``tool``
@@ -151,6 +156,10 @@ def _hex(pid) -> str:
     return _pid(pid).replace("-", "")
 
 
+def editor_role_name(pid) -> str:
+    return f"{EDITOR_ROLE_PREFIX}{_hex(pid)}"
+
+
 def project_role_name(pid) -> str:
     """The Superset role a member of the project gets at login."""
     return f"{ROLE_PREFIX}{_hex(pid)}"
@@ -199,6 +208,7 @@ def register_project(pid, slug: str, name: str, *, store, controls_password: str
         ("datasource_access", controls_ds),
         ("database_access", database),
     ]})
+    store.upsert("role", editor_role_name(pid), {**tag, "permissions": [list(p) for p in EDITOR_PERMISSIONS]})
     # No project-wide dashboard any more (plugin dashboards 2026-10-04, O2): a project's charts are its
     # plugins' tiles (aisc_ext/plugin_tiles.py). One made before is left as it is.
 
@@ -377,8 +387,11 @@ class SupersetStore:
         for permission, name in spec["permissions"]:
             if permission == "datasource_access":
                 obj = session.query(SqlaTable).filter_by(table_name=name).one_or_none()
-            else:
+            elif permission == "database_access":
                 obj = session.query(Database).filter_by(database_name=name).one_or_none()
+            else:                                   # a view permission, such as can_write on Chart
+                wanted.append(sm.add_permission_view_menu(permission, name))
+                continue
             if obj is None:
                 continue
             pv = sm.add_permission_view_menu(permission, obj.perm)
@@ -394,10 +407,12 @@ class SupersetStore:
     def _items_role(self):
         out = {}
         for role in self._sm().get_all_roles():
-            if role.name.startswith(ROLE_PREFIX):
-                hex_ = role.name[len(ROLE_PREFIX):]
-                if _PID_HEX.fullmatch(hex_):
-                    out[role.name] = {PROJECT_TAG: str(uuid.UUID(hex_))}
+            for prefix in (EDITOR_ROLE_PREFIX, ROLE_PREFIX):
+                if role.name.startswith(prefix):
+                    hex_ = role.name[len(prefix):]
+                    if _PID_HEX.fullmatch(hex_):
+                        out[role.name] = {PROJECT_TAG: str(uuid.UUID(hex_))}
+                    break
         return out
 
     # ---- dashboards ------------------------------------------------------

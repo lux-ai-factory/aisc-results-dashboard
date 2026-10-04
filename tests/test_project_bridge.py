@@ -131,3 +131,48 @@ def test_s11_2_the_sso_manager_uses_the_membership():
     import pathlib
     text = (pathlib.Path(__file__).resolve().parents[1] / "aisc_ext" / "sso.py").read_text()
     assert "roles_for_login" in text
+
+
+# ---- plugin dashboards 2026-10-04, T5: owners and editors build charts ---------
+
+def test_t5_1_membership_is_read_with_the_members_rank(projects):
+    sql = " ".join(projects.MEMBER_PROJECTS_SQL.split()).lower()
+    assert sql.startswith("select project_id, role from core.project_member")
+
+
+def test_t5_2_an_owner_or_editor_also_gets_the_projects_editor_role():
+    security = _load("aisc_ext.security")
+    for rank in ("owner", "editor"):
+        roles = security.roles_for_login(["primary-user"], [(PID, rank)])
+        assert set(roles) == {security.VIEWER_ROLE, f"AiscProject_{HEX}", f"AiscProjectEditor_{HEX}"}, rank
+
+
+def test_t5_2_a_viewer_gets_the_project_role_only():
+    security = _load("aisc_ext.security")
+    assert set(security.roles_for_login(["primary-user"], [(PID, "viewer")])) == {
+        security.VIEWER_ROLE, f"AiscProject_{HEX}"}
+
+
+def test_t5_2_a_bare_pid_still_reads_as_a_viewer():
+    """What _member_projects returned before ranks: no editor role from it."""
+    security = _load("aisc_ext.security")
+    assert f"AiscProjectEditor_{HEX}" not in security.roles_for_login(["primary-user"], [PID])
+
+
+def test_t5_3_the_editor_role_writes_charts_and_dashboards_and_nothing_else(projects):
+    import tests.test_projects as tp
+    store = tp.FakeStore()
+    tp._register(projects, store)
+    role = store.items("role")[f"AiscProjectEditor_{HEX}"]
+    assert sorted(map(tuple, role["permissions"])) == [("can_write", "Chart"), ("can_write", "Dashboard")]
+    assert role["aisc_project"] == PID
+
+
+def test_t5_4_owners_and_editors_own_their_plugin_dashboards_and_a_former_editor_is_removed():
+    security = _load("aisc_ext.security")
+    dashboards = [("aisc-p-drift", PID, False), ("aisc-p-langbite", PID, True), ("aisc-o-drift", OTHER, True),
+                  ("aisc-x-drift", "c0ffee00-0000-4000-8000-000000000000", False)]
+    add, remove = security.ownership_changes([(PID, "editor"), (OTHER, "viewer")], dashboards)
+    assert add == ["aisc-p-drift"] and remove == ["aisc-o-drift"]
+    add, remove = security.ownership_changes([], dashboards)
+    assert add == [] and remove == ["aisc-o-drift", "aisc-p-langbite"]

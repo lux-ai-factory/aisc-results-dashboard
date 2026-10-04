@@ -91,19 +91,41 @@ def extract_realm_roles(claims: dict) -> list[str]:
     return list(claims.get("realm_access", {}).get("roles", []))
 
 
-def roles_for_login(realm_roles: list[str], member_project_pids) -> list[str]:
-    """The role mapped from the realm roles, then one project role per membership.
+def _memberships(memberships):
+    """[(pid, rank)] from what _member_projects gives: (pid, rank) pairs, or bare pids (read as viewers)."""
+    out = []
+    for m in memberships or []:
+        pid, rank = (m[0], m[1]) if isinstance(m, (tuple, list)) else (m, "viewer")
+        out.append((str(pid), str(rank or "viewer")))
+    return out
 
-    A project's dashboard is visible to its project role only (DASHBOARD_RBAC),
-    so these roles are what let a member see it and keep everyone else out."""
-    from aisc_ext.projects import project_role_name
+
+def roles_for_login(realm_roles: list[str], memberships) -> list[str]:
+    """The role mapped from the realm roles, then one project role per membership, and for an owner or
+    editor the project's editor role too (plugin dashboards 2026-10-04: they build charts).
+
+    A project's dashboards are visible to its project role only (DASHBOARD_RBAC),
+    so these roles are what let a member see them and keep everyone else out."""
+    from aisc_ext.projects import editor_role_name, project_role_name
 
     out = list(map_keycloak_roles(realm_roles))
-    for pid in member_project_pids or []:
-        role = project_role_name(pid)
-        if role not in out:
-            out.append(role)
+    for pid, rank in _memberships(memberships):
+        for role in [project_role_name(pid)] + ([editor_role_name(pid)] if rank in ("owner", "editor") else []):
+            if role not in out:
+                out.append(role)
     return out
+
+
+def ownership_changes(memberships, dashboards) -> tuple[list[str], list[str]]:
+    """Which plugin dashboards to make the person an owner of, and which to remove them from.
+
+    dashboards: [(slug, project pid, the person owns it now)], the plugin dashboards (aisc_plugin in their
+    metadata). An owner or editor of the project owns its plugin dashboards, which Superset needs to let them
+    add charts; anyone else does not, so a rank that fell to viewer, or a membership that ended, takes it away."""
+    builders = {pid for pid, rank in _memberships(memberships) if rank in ("owner", "editor")}
+    add = sorted(slug for slug, pid, owns in dashboards if pid in builders and not owns)
+    remove = sorted(slug for slug, pid, owns in dashboards if pid not in builders and owns)
+    return add, remove
 
 
 def map_keycloak_roles(realm_roles: list[str]) -> list[str]:
