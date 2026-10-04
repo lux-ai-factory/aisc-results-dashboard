@@ -181,6 +181,25 @@ def controls_database_name(slug: str) -> str:
     return f"AISC Controls {slug}"
 
 
+def project_lock_key(pid) -> int:
+    """The project's key for pg_advisory_lock (a bigint): the first 8 bytes of its uuid."""
+    return int.from_bytes(uuid.UUID(_pid(pid)).bytes[:8], "big", signed=True)
+
+
+def results_dataset_spec(pid, database: str) -> dict:
+    """The project's results dataset as this code defines it: what register_project writes, and what a tile
+    sync writes again when the dataset was registered by older code (aisc_ext/plugin_tiles.py)."""
+    return {PROJECT_TAG: str(_pid(pid)), "database": database, "sql": engine_results_sql(),
+            "columns": [list(c) for c in ENGINE_RESULTS_COLUMNS],
+            # the Run filter sorts by it, newest first (aisc_ext/charts.py)
+            "metrics": charts.dataset_metrics()}
+
+
+def results_dataset_current(sql: str | None, columns) -> bool:
+    """Whether the registered dataset is the one this code defines: its SQL, and every column."""
+    return sql == engine_results_sql() and {c[0] for c in ENGINE_RESULTS_COLUMNS} <= set(columns or [])
+
+
 def register_project(pid, slug: str, name: str, *, store, controls_password: str) -> None:
     """Make (or bring up to date) every dashboard object of the project. Idempotent."""
     pid = _pid(pid)
@@ -197,10 +216,7 @@ def register_project(pid, slug: str, name: str, *, store, controls_password: str
     })
     # A dataset registered before the isolation sits on "AISC Results"; this
     # upsert moves it onto the project connection and keeps its id (I10.1).
-    store.upsert("dataset", engine_ds, {**tag, "database": database, "sql": engine_results_sql(),
-                                        "columns": [list(c) for c in ENGINE_RESULTS_COLUMNS],
-                                        # the Run filter sorts by it, newest first (aisc_ext/charts.py)
-                                        "metrics": charts.dataset_metrics()})
+    store.upsert("dataset", engine_ds, results_dataset_spec(pid, database))
     store.upsert("dataset", controls_ds, {**tag, "database": database, "sql": controls_answers_sql(),
                                           "columns": [list(c) for c in CONTROLS_ANSWERS_COLUMNS]})
     store.upsert("role", role, {**tag, "permissions": [
@@ -465,6 +481,37 @@ class SupersetStore:
                 "database_uuid": str(database.uuid), "database_name": database.database_name,
                 # with the password masked: Superset never overwrites a connection on import (02-p0-findings)
                 "sqlalchemy_uri": database.sqlalchemy_uri, "columns": [c.column_name for c in dataset.columns]}
+
+    def dataset_sql(self, pid):
+        """The SQL the project's results dataset is registered with; None if not registered."""
+        from superset.connectors.sqla.models import SqlaTable  # type: ignore
+
+        dataset = self._db().session.query(SqlaTable).filter_by(table_name=f"engine_results_{_hex(pid)}").one_or_none()
+        return None if dataset is None else dataset.sql
+
+    def project_lock(self, pid):
+        """One tile sync of the project at a time, across Superset's workers: a Postgres advisory lock on
+        Superset's own database, held on a connection of its own (the imports commit, so a transaction's
+        lock would not last). Another metadata database (SQLite in development) has no lock."""
+        import contextlib
+
+        from sqlalchemy import text  # type: ignore
+
+        key = project_lock_key(pid)
+
+        @contextlib.contextmanager
+        def held():
+            engine = self._db().engine
+            if engine.dialect.name != "postgresql":
+                yield
+                return
+            with engine.connect() as conn:
+                conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": key})
+                try:
+                    yield
+                finally:
+                    conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": key})
+        return held()
 
     def latest_run(self, pid, label):
         """The plugin's latest run in the project, named as the dataset names it; None before any run."""

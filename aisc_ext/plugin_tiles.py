@@ -21,7 +21,7 @@ from __future__ import annotations
 import copy
 
 from aisc_ext import charts
-from aisc_ext.projects import _pid, project_role_name
+from aisc_ext.projects import _pid, project_role_name, results_dataset_current, results_dataset_spec
 
 _AISC_NODES = ("HEADER-aisc-", "MARKDOWN-aisc-", "ROW-aisc-", "CHART-aisc-")
 
@@ -78,16 +78,29 @@ def user_part(position: dict | None, linked: list[dict]) -> dict:
 def sync_plugin(pid, project_name: str, plugin: str, label: str, version: str, visualizations: list[dict], *,
                 store, importer) -> dict:
     """Make or update the plugin's dashboard in the project. Idempotent: a second sync with the same input
-    changes nothing. Returns {"slug", "charts"} (the number of default charts)."""
+    changes nothing. Returns {"slug", "charts"} (the number of default charts).
+
+    Holds the project's lock throughout: two syncs at once would both make a new dashboard (2026-10-05). The
+    results dataset is first brought up to date when older code registered it, so the tile never waits on
+    the platform's next registration."""
     pid = _pid(pid)
+    with store.project_lock(pid):
+        return _sync(pid, project_name, plugin, label, version, visualizations, store=store, importer=importer)
+
+
+def _sync(pid, project_name, plugin, label, version, visualizations, *, store, importer) -> dict:
     source = store.source(pid)
     if source is None:
         raise LookupError(f"project {pid} is not registered in the dashboard")
+    if not results_dataset_current(store.dataset_sql(pid), source["columns"]):
+        store.upsert("dataset", source["dataset_name"], results_dataset_spec(pid, source["database_name"]))
+        source = store.source(pid)
     common = dict(pid=pid, plugin=plugin, label=label, **source)
     slug = charts.plugin_slug(pid, plugin)
+    latest_run = store.latest_run(pid, label)
 
     starter_id = None
-    if visualizations:
+    if latest_run is not None or visualizations:
         importer.import_charts(charts.starter_bundle(**common))
         starter_id = store.chart_id(charts.starter_uuid(pid, plugin))
 
@@ -97,7 +110,7 @@ def sync_plugin(pid, project_name: str, plugin: str, label: str, version: str, v
 
     files = charts.bundle(project_name=project_name or pid, version=version, visualizations=visualizations,
                           starter_chart_id=starter_id, user_part=kept,
-                          latest_run=store.latest_run(pid, label) if visualizations else None, **common)
+                          latest_run=latest_run, **common)
     importer.import_dashboard(files)
 
     defaults = [charts.chart_uuid(pid, plugin, i, v.get("title") or "") for i, v in enumerate(visualizations)]

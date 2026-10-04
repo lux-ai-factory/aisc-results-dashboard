@@ -176,10 +176,22 @@ def test_t3_5_the_layout_has_defaults_then_your_charts_with_the_starter_link(cha
 
 
 def test_t3_5_with_no_results_yet_the_tile_says_to_run_the_test(charts):
-    dash = yaml.safe_load(next(v for k, v in make_bundle(charts, visualizations=[]).items() if k.startswith("dashboards/")))
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts, visualizations=[], latest_run=None).items()
+                               if k.startswith("dashboards/")))
     md = [v for v in dash["position"].values() if isinstance(v, dict) and v.get("type") == "MARKDOWN"]
     assert any("No results yet" in m["meta"]["code"] and "Data Drift" in m["meta"]["code"] for m in md)
     assert not any("slice_id" in m["meta"]["code"] for m in md)
+
+
+def test_t3_5_a_run_with_no_default_charts_says_the_version_declares_none(charts):
+    """Results, but a plugin version with no default charts (LangBiTe 0.2.4, 2026-10-05): not "No results
+    yet", and the starter link is offered."""
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts, visualizations=[]).items()
+                               if k.startswith("dashboards/")))
+    md = [v["meta"]["code"] for v in dash["position"].values() if isinstance(v, dict) and v.get("type") == "MARKDOWN"]
+    assert not any("No results yet" in m for m in md)
+    assert any("Data Drift 0.4.1 declares no default charts" in m for m in md)
+    assert any("/explore/?slice_id=42" in m for m in md)
 
 
 def test_t3_5_the_users_part_of_the_layout_is_kept_after_your_charts(charts):

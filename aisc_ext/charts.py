@@ -159,10 +159,10 @@ def _header(node_id, text, parents) -> dict:
 YOUR_CHARTS = "Your charts"
 
 
-def layout(*, label, version, placed, starter_chart_id, user_part) -> dict:
-    """The dashboard layout: "Default charts · <plugin> <version>", the defaults in rows of two, "Your
-    charts", the starter link (or, before any run, how to get results), then whatever people placed there
-    (user_part: their layout nodes, kept as they were)."""
+def layout(*, label, version, placed, starter_chart_id, user_part, has_run=False) -> dict:
+    """The dashboard layout: "Default charts · <plugin> <version>", the defaults in rows of two (or, with
+    none, why: no run yet, or a plugin version that declares none), "Your charts", the starter link, then
+    whatever people placed there (user_part: their layout nodes, kept as they were)."""
     grid = ["ROOT_ID", "GRID_ID"]
     pos = {"DASHBOARD_VERSION_KEY": "v2",
            "ROOT_ID": {"type": "ROOT", "id": "ROOT_ID", "children": ["GRID_ID"]},
@@ -187,6 +187,11 @@ def layout(*, label, version, placed, starter_chart_id, user_part) -> dict:
                 pos[node_id] = {"type": "CHART", "id": node_id, "children": [], "parents": grid + [row_id],
                                 "meta": {"chartId": 0, "uuid": chart_id, "width": 6, "height": 50,
                                          "sliceName": name}}
+    elif has_run:
+        add(_markdown("MARKDOWN-aisc-no-defaults",
+                      f"**{label} {version} declares no default charts.** Its results are in this project: build "
+                      f"charts of your own under {YOUR_CHARTS}. A version of {label} that declares default "
+                      f"charts puts them here.", grid))
     else:
         add(_markdown("MARKDOWN-aisc-no-results",
                       f"**No results yet.** Run {label} in the engine: its default charts appear here after "
@@ -253,7 +258,9 @@ def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset
         "slug": plugin_slug(pid, plugin), "certified_by": None, "certification_details": None, "published": True,
         "uuid": dashboard_uuid(pid, plugin), "version": _VERSION,
         "position": layout(label=label, version=version, placed=placed,
-                           starter_chart_id=starter_chart_id if placed else None, user_part=user_part),
+                           starter_chart_id=starter_chart_id if placed or latest_run is not None else None,
+                           user_part=user_part,
+                           has_run=latest_run is not None),
         "metadata": {"native_filter_configuration": native_filters(dataset_uuid, latest_run), "color_scheme": "",
                      "aisc_project": pid, "aisc_plugin": plugin, "aisc_version": version,
                      "aisc_charts": [cid for cid, _ in placed]}})

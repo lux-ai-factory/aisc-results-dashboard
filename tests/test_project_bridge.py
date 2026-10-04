@@ -127,10 +127,13 @@ def test_s11_2_membership_is_read_from_core_project_member(projects):
 
 
 def test_s11_2_the_sso_manager_uses_the_membership():
-    """auth_user_oauth must call roles_for_login, not only map_keycloak_roles."""
+    """auth_user_oauth must go through apply_sign_in (roles_for_login, then ownership), not only
+    map_keycloak_roles. apply_sign_in is shared with the gateway's sign-in since f761fd4."""
     import pathlib
     text = (pathlib.Path(__file__).resolve().parents[1] / "aisc_ext" / "sso.py").read_text()
-    assert "roles_for_login" in text
+    assert "apply_sign_in(self, user" in text
+    security = (pathlib.Path(__file__).resolve().parents[1] / "aisc_ext" / "security.py").read_text()
+    assert "desired = roles_for_login(realm_roles, memberships)" in security
 
 
 # ---- plugin dashboards 2026-10-04, T5: owners and editors build charts ---------

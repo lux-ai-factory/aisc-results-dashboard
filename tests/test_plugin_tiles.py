@@ -45,6 +45,10 @@ class Superset:
         self.imports = []
         self.latest = "Run 2 · 04 Oct 2026, 20:39"
         self.with_project = with_project
+        from aisc_ext.projects import ENGINE_RESULTS_COLUMNS, engine_results_sql
+        self.dataset = {"sql": engine_results_sql(), "columns": [c[0] for c in ENGINE_RESULTS_COLUMNS]}
+        self.upserts = []
+        self.events = []            # "lock", "unlock" and each import, in order
 
     # -- what the tile code reads and writes --
     def source(self, pid):
@@ -52,7 +56,28 @@ class Superset:
             return None
         return {"dataset_uuid": "aaaaaaaa-0000-4000-8000-000000000001", "dataset_name": f"engine_results_{HEX}",
                 "database_uuid": "bbbbbbbb-0000-4000-8000-000000000001", "database_name": "AISC Controls mcas",
-                "sqlalchemy_uri": "postgresql+psycopg2://dashboard_ro:XXXXXXXXXX@postgres:5432/x", "columns": COLUMNS}
+                "sqlalchemy_uri": "postgresql+psycopg2://dashboard_ro:XXXXXXXXXX@postgres:5432/x",
+                "columns": list(self.dataset["columns"])}
+
+    def dataset_sql(self, pid):
+        return self.dataset["sql"] if self.with_project else None
+
+    def upsert(self, kind, key, spec):
+        self.upserts.append((kind, key, spec))
+        if kind == "dataset":
+            self.dataset = {"sql": spec["sql"], "columns": [c[0] for c in spec["columns"]]}
+
+    def project_lock(self, pid):
+        import contextlib
+
+        @contextlib.contextmanager
+        def held():
+            self.events.append("lock")
+            try:
+                yield
+            finally:
+                self.events.append("unlock")
+        return held()
 
     def latest_run(self, pid, label):
         return self.latest
@@ -98,10 +123,12 @@ class Superset:
 
     def import_charts(self, files):
         self.imports.append(("charts", files))
+        self.events.append("charts")
         self._write_charts(files)
 
     def import_dashboard(self, files):
         self.imports.append(("dashboard", files))
+        self.events.append("dashboard")
         written = self._write_charts(files)
         (dash,) = [yaml.safe_load(t) for p, t in files.items() if p.startswith("dashboards/")]
         pos = dash["position"]
@@ -168,6 +195,73 @@ def test_t4_2_before_any_run_the_tile_says_to_run_the_test(tiles, charts):
     codes = [n["meta"]["code"] for n in s.dashboards[slug]["position"].values()
              if isinstance(n, dict) and n.get("type") == "MARKDOWN"]
     assert any("No results yet" in c for c in codes) and not any("slice_id" in c for c in codes)
+
+
+def markdown(s, slug):
+    return [n["meta"]["code"] for n in s.dashboards[slug]["position"].values()
+            if isinstance(n, dict) and n.get("type") == "MARKDOWN"]
+
+
+def test_t4_2_a_run_of_a_version_with_no_default_charts_says_so_and_offers_the_starter(tiles, charts):
+    """The plugin ran, but its version declares no default charts (LangBiTe 0.2.4): the tile says that, not
+    "No results yet", and the starter is there to build charts of one's own."""
+    s = Superset()
+    out = sync(tiles, s, visualizations=[], version="0.2.4")
+    slug = charts.plugin_slug(PID, PLUGIN)
+    assert out == {"slug": slug, "charts": 0}
+    codes = markdown(s, slug)
+    assert not any("No results yet" in c for c in codes)
+    assert any("Data Drift 0.2.4 declares no default charts" in c for c in codes)
+    starter = s.charts[charts.starter_uuid(PID, PLUGIN)]
+    assert any(f"slice_id={starter['id']}" in c for c in codes)
+
+
+def test_t4_9_a_stale_results_dataset_is_brought_up_to_date_before_the_tile(tiles, charts):
+    """A project registered by older dashboard code has the dataset without the run columns (the stack's
+    restart order, 2026-10-05): the sync rewrites it first, and the bundle names the current columns."""
+    from aisc_ext.projects import ENGINE_RESULTS_COLUMNS, engine_results_sql
+    s = Superset()
+    s.dataset = {"sql": "SELECT 1 AS score", "columns": ["score", "metric", "tool", "target_label"]}
+    sync(tiles, s)
+    (kind, key, spec), = s.upserts
+    assert (kind, key) == ("dataset", f"engine_results_{HEX}")
+    assert spec["sql"] == engine_results_sql() and spec["database"] == "AISC Controls mcas"
+    assert spec["aisc_project"] == PID and spec["metrics"]
+    assert spec["columns"] == [list(c) for c in ENGINE_RESULTS_COLUMNS]
+    dataset_file = next(yaml.safe_load(t) for p, t in s.imports[-1][1].items() if p.startswith("datasets/"))
+    assert "run" in [c["column_name"] for c in dataset_file["columns"]]
+
+
+def test_t4_9_a_current_results_dataset_is_left_alone(tiles):
+    s = Superset()
+    sync(tiles, s)
+    assert s.upserts == []
+
+
+def test_t4_10_a_sync_holds_the_projects_lock_around_everything_it_writes(tiles):
+    """Two syncs of a project at once both made its new dashboard, and one failed on the slug (2026-10-05):
+    a sync holds the project's lock from reading the dataset to setting the dashboard's roles."""
+    s = Superset()
+    s.dataset = {"sql": "SELECT 1 AS score", "columns": ["score"]}
+    real_upsert = s.upsert
+
+    def upsert(kind, key, spec):
+        s.events.append("refresh")
+        real_upsert(kind, key, spec)
+    s.upsert = upsert
+    sync(tiles, s)
+    assert s.events == ["lock", "refresh", "charts", "dashboard", "unlock"]
+
+
+def test_t4_10_the_lock_is_released_when_the_sync_fails(tiles):
+    s = Superset()
+
+    def boom(files):
+        raise RuntimeError("import failed")
+    s.import_dashboard = boom
+    with pytest.raises(RuntimeError):
+        sync(tiles, s)
+    assert s.events[-1] == "unlock"
 
 
 def test_t4_3_a_second_sync_changes_nothing(tiles, charts):
@@ -267,3 +361,12 @@ def test_t4_8_a_request_names_the_plugin_and_its_charts(tiles):
                                 "visualizations": [{"chart_type": "bars", "metrics": ["a"], "title": "A"}]})
     assert req == {"plugin": "x::Y", "label": "Y", "version": "1.0", "project_name": "mcas",
                    "visualizations": [{"chart_type": "bars", "metrics": ["a"], "title": "A"}]}
+
+
+def test_t4_10_the_lock_key_is_a_signed_64_bit_number_of_the_project():
+    """pg_advisory_lock takes a bigint: one per project, the same in every worker."""
+    from aisc_ext.projects import project_lock_key
+    key = project_lock_key(PID)
+    assert isinstance(key, int) and -2**63 <= key < 2**63
+    assert key == project_lock_key(PID.upper())
+    assert key != project_lock_key("0b7f5c3e-2d7a-4c1e-9f64-3a1b2c3d4e5f")
