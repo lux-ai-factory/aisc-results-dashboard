@@ -23,6 +23,8 @@ import yaml
 #: the dataset's saved metric the Run filter sorts by, so the newest run comes first ("Run 10" sorts
 #: before "Run 9" as text)
 LATEST_RUN_METRIC = "latest_run"
+#: a table lists every row (LangBiTe's failed cases): Superset's own ROW_LIMIT, paged in the browser
+TABLE_ROW_LIMIT = 50000
 #: Superset's chart type per MetricVisualization chart type; the rest are drawn as tables (and say so)
 _KINDS = {"bars": "echarts_timeseries_bar", "line": "echarts_timeseries_line", "table": "table", "pie": "pie"}
 _NAMESPACE = uuid.UUID("6f2a7c1e-4b3d-4e8a-9c5f-0d1e2f3a4b5c")
@@ -38,8 +40,8 @@ def default_title(v: dict) -> str:
     return "Default · " + (v.get("title") or ", ".join(v.get("metrics") or []) or "Chart")
 
 
-def _score(aggregate: str) -> dict:
-    return {"expressionType": "SIMPLE", "aggregate": aggregate, "label": "score", "column": {"column_name": "score"}}
+def _score(aggregate: str, label: str = "score") -> dict:
+    return {"expressionType": "SIMPLE", "aggregate": aggregate, "label": label, "column": {"column_name": "score"}}
 
 
 def _filter(subject, operator, comparator) -> dict:
@@ -73,9 +75,13 @@ def chart_settings(v: dict, *, plugin_label: str, columns) -> tuple[str, dict, s
     elif viz_type == "pie":
         params = {"metric": _score("SUM"), "groupby": [label or "metric"]}
     else:
-        params = {"query_mode": "aggregate", "groupby": ["run"] + groups + ["metric"], "metrics": [_score("AVG")],
-                  "all_columns": [], "percent_metrics": []}
-    params.update({"viz_type": viz_type, "adhoc_filters": filters, "row_limit": 1000})
+        # one metric needs no metric column: its value is named by it
+        single = len(metrics) == 1
+        params = {"query_mode": "aggregate", "groupby": ["run"] + groups + ([] if single else ["metric"]),
+                  "metrics": [_score("AVG", metrics[0] if single else "score")], "all_columns": [],
+                  "percent_metrics": [], "server_pagination": False, "page_length": 50, "include_search": True}
+    params.update({"viz_type": viz_type, "adhoc_filters": filters,
+                   "row_limit": TABLE_ROW_LIMIT if viz_type == "table" else 1000})
 
     notes = [f"Made by the {plugin_label} plugin. Use Save as to change it."]
     if v.get("description"):

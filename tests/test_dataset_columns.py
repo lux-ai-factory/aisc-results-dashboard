@@ -35,7 +35,8 @@ def test_t1_both_datasets_are_registered_with_their_declared_columns(projects):
                                         "evaluated_at", "system_version_pid", "system_version", "target_key",
                                         "target_kind", "target_component_kind", "target_label", "target_status",
                                         "tool", "run", "run_order", "feature", "concern", "flag", "language",
-                                        "input_type", "reflection_type", "model", "statistic", "p_value"]
+                                        "input_type", "reflection_type", "model", "prompt", "response",
+                                        "expected", "statistic", "p_value"]
     assert _declared(store, CONTROLS) == ["title", "text", "answer", "score", "system_version_number",
                                           "answered_at", "label", "submission_version"]
 
@@ -51,6 +52,8 @@ def test_t1_the_types_are_the_ones_superset_itself_infers():
         # plugin dashboards 2026-10-04 (T2.1): the run as people name it, and the plugins' dimensions
         "run": "STRING", "run_order": "INTEGER", "feature": "STRING", "concern": "STRING", "flag": "STRING",
         "language": "STRING", "input_type": "STRING", "reflection_type": "STRING", "model": "STRING",
+        # LangBiTe's failed cases, 2026-10-05
+        "prompt": "STRING", "response": "STRING", "expected": "STRING",
         "statistic": "FLOAT", "p_value": "FLOAT"}
     assert dict(p.CONTROLS_ANSWERS_COLUMNS) == {
         "title": "STRING", "text": "STRING", "answer": "STRING", "score": "INTEGER",
@@ -237,11 +240,13 @@ def test_t2_2_the_run_is_numbered_in_order_of_the_evaluations_and_named_with_its
 def test_t2_2_each_dimension_column_reads_its_key_and_the_numbers_are_cast():
     p = importlib.import_module("aisc_ext.projects")
     sql = " ".join(p.engine_results_sql().split())
-    for key in ("feature", "concern", "flag", "language", "input_type", "reflection_type", "model"):
+    for key in ("feature", "concern", "flag", "language", "input_type", "reflection_type", "model",
+                "prompt", "response", "expected"):
         assert f"m.dimensions->>'{key}' AS {key}" in sql, key
     for key in ("statistic", "p_value"):
         assert (f"CASE WHEN m.dimensions->>'{key}' ~ '{p.NUMBER_PATTERN}' "
                 f"THEN (m.dimensions->>'{key}')::double precision END AS {key}") in sql, key
+    # prompt, response, expected: LangBiTe's failed cases (0.2.6), the answer as the target gave it
     assert p.DIMENSION_COLUMNS == ("feature", "concern", "flag", "language", "input_type", "reflection_type",
-                                   "model")
+                                   "model", "prompt", "response", "expected")
     assert p.NUMERIC_DIMENSION_COLUMNS == ("statistic", "p_value")

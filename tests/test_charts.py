@@ -17,7 +17,7 @@ PID = "1e722ea2-4ce3-47fa-81bf-11a6b53ad679"
 DATASET_UUID = "aaaaaaaa-0000-4000-8000-000000000001"
 DATABASE_UUID = "bbbbbbbb-0000-4000-8000-000000000001"
 COLUMNS = ["pid", "score", "metric", "evaluated_at", "target_label", "tool", "run", "run_order", "feature",
-           "concern", "flag", "statistic", "p_value"]
+           "concern", "flag", "statistic", "p_value", "prompt", "response", "expected"]
 
 
 @pytest.fixture
@@ -74,6 +74,25 @@ def test_t3_1_tables_aggregate_by_run_grouping_and_metric(charts):
     assert viz_type == "table" and params["query_mode"] == "aggregate"
     assert params["groupby"] == ["run", "feature", "metric"]
     assert [m["aggregate"] for m in params["metrics"]] == ["AVG"]
+
+
+def test_t3_1_a_table_of_one_metric_needs_no_metric_column_and_names_its_value(charts):
+    """LangBiTe's Failed cases (2026-10-05): one row per answer, the value column named by the metric."""
+    viz_type, params, _ = settings(charts, viz("table", ["Failed cases"], title="Failed cases",
+                                               group_by_dimensions=["concern", "prompt", "response", "expected"]))
+    assert viz_type == "table"
+    assert params["groupby"] == ["run", "concern", "prompt", "response", "expected"]
+    assert [(m["aggregate"], m["label"]) for m in params["metrics"]] == [("AVG", "Failed cases")]
+
+
+def test_t3_1_a_table_shows_every_row(charts):
+    """Every failed answer, not the first thousand: up to Superset's own row limit, paged in the browser."""
+    _, params, _ = settings(charts, viz("table", ["Failed cases"], group_by_dimensions=["concern"]))
+    assert params["row_limit"] == charts.TABLE_ROW_LIMIT == 50000
+    assert params["server_pagination"] is False and params["page_length"] == 50
+    assert params["include_search"] is True
+    _, bars, _ = settings(charts, viz("bars", ["Drift Score"]))
+    assert bars["row_limit"] == 1000
 
 
 def test_t3_1_pies_split_by_metric_and_add_up(charts):

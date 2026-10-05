@@ -70,7 +70,9 @@ MEMBER_PROJECTS_SQL = "SELECT project_id, role FROM core.project_member WHERE su
 #: The dimensions plugins write (plugin dashboards, 2026-10-04): each key a column of its own, so a
 #: chart can group by it. Text keys as they are; statistic and p_value are numbers sent as strings
 #: (the engine takes no floats in dimensions), cast back here, NULL when not a number ("nan").
-DIMENSION_COLUMNS = ("feature", "concern", "flag", "language", "input_type", "reflection_type", "model")
+DIMENSION_COLUMNS = ("feature", "concern", "flag", "language", "input_type", "reflection_type", "model",
+                     # LangBiTe's failed cases (0.2.6): the prompt as sent, the answer as given, what was expected
+                     "prompt", "response", "expected")
 NUMERIC_DIMENSION_COLUMNS = ("statistic", "p_value")
 NUMBER_PATTERN = r"^[-+]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][-+]?[0-9]+)?$"
 
