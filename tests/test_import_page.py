@@ -92,7 +92,7 @@ def test_t7_a_file_it_cannot_take_is_refused_with_why(imp, bad, message):
 
 def test_t7_1_imported_charts_go_under_your_charts(imp):
     charts = importlib.import_module("aisc_ext.charts")
-    position = charts.layout(label="Data Drift", version="0.4.1", placed=[("u1", "Default · A")], starter_chart_id=3,
+    position = charts.layout(label="Data Drift", version="0.4.1", placed=[("u1", "Default · A", "echarts_timeseries_bar")], starter_chart_id=3,
                              user_part={})
     out = imp.place_under_your_charts(position, [{"id": 41, "uuid": "u-new", "name": "Levene per feature"}])
     grid = out["GRID_ID"]["children"]

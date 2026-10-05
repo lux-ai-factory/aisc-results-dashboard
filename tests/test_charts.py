@@ -85,6 +85,12 @@ def test_t3_1_a_table_of_one_metric_needs_no_metric_column_and_names_its_value(c
     assert [(m["aggregate"], m["label"]) for m in params["metrics"]] == [("AVG", "Failed cases")]
 
 
+def test_t3_1_bars_tilt_their_labels_so_every_category_is_named(charts):
+    """Five concerns side by side: Superset (ECharts) hid every other label (2026-10-05, mcas)."""
+    _, params, _ = settings(charts, viz("bars", ["Bias Evaluation Results"], group_by_dimensions=["concern"]))
+    assert params["xAxisLabelRotation"] == 45
+
+
 def test_t3_1_a_table_shows_every_row(charts):
     """Every failed answer, not the first thousand: up to Superset's own row limit, paged in the browser."""
     _, params, _ = settings(charts, viz("table", ["Failed cases"], group_by_dimensions=["concern"]))
@@ -192,6 +198,26 @@ def test_t3_5_the_layout_has_defaults_then_your_charts_with_the_starter_link(cha
     # rows of two defaults
     rows = [pos[c] for c in pos["GRID_ID"]["children"] if pos[c]["type"] == "ROW"]
     assert [len(r["children"]) for r in rows] == [2, 1]
+
+
+def _rows(dash):
+    pos = dash["position"]
+    return [[pos[c]["meta"] for c in pos[r]["children"]] for r in pos["GRID_ID"]["children"]
+            if pos[r]["type"] == "ROW"]
+
+
+def test_t3_5_a_table_takes_a_full_row_below_and_a_lone_chart_the_full_width(charts):
+    """LangBiTe (2026-10-05): the pass rate per concern, and below it the failed cases, both full width; a
+    table is taller (it lists every failed answer). Two charts that are not tables still share a row."""
+    lb = [viz("bars", ["Bias Evaluation Results"], title="Pass rate per concern", group_by_dimensions=["concern"]),
+          viz("table", ["Failed cases"], title="Failed cases", group_by_dimensions=["concern", "prompt"])]
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts, visualizations=lb).items()
+                               if k.startswith("dashboards/")))
+    rows = _rows(dash)
+    assert [[(m["sliceName"], m["width"], m["height"]) for m in r] for r in rows] == [
+        [("Default · Pass rate per concern", 12, 50)], [("Default · Failed cases", 12, 90)]]
+    drift = _rows(yaml.safe_load(next(v for k, v in make_bundle(charts).items() if k.startswith("dashboards/"))))
+    assert [[(m["width"], m["height"]) for m in r] for r in drift] == [[(6, 50), (6, 50)], [(12, 90)]]
 
 
 def test_t3_5_with_no_results_yet_the_tile_says_to_run_the_test(charts):

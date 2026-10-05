@@ -69,7 +69,9 @@ def chart_settings(v: dict, *, plugin_label: str, columns) -> tuple[str, dict, s
     if viz_type == "echarts_timeseries_bar":
         x_axis = groups[0] if groups else "metric"
         series = label or ("metric" if x_axis != "metric" else None)
-        params = {"x_axis": x_axis, "metrics": [_score("AVG")], "groupby": [g for g in (series, "run") if g]}
+        params = {"x_axis": x_axis, "metrics": [_score("AVG")], "groupby": [g for g in (series, "run") if g],
+                  # tilted, every category is named: flat, ECharts drops the labels that would overlap
+                  "xAxisLabelRotation": 45}
     elif viz_type == "echarts_timeseries_line":
         params = {"x_axis": "run_order", "metrics": [_score("AVG")], "groupby": [label or "metric"]}
     elif viz_type == "pie":
@@ -165,8 +167,25 @@ def _header(node_id, text, parents) -> dict:
 YOUR_CHARTS = "Your charts"
 
 
+def _rows(placed) -> list[list]:
+    """The defaults in rows, in their order: a table alone on a full-width row (it lists cases: LangBiTe's
+    failed answers), the other charts two to a row; a chart left alone takes the full width."""
+    rows, pending = [], []
+    for chart in placed:
+        if chart[2] == "table":
+            rows += [pending] if pending else []
+            rows.append([chart])
+            pending = []
+        else:
+            pending.append(chart)
+            if len(pending) == 2:
+                rows.append(pending)
+                pending = []
+    return rows + ([pending] if pending else [])
+
+
 def layout(*, label, version, placed, starter_chart_id, user_part, has_run=False) -> dict:
-    """The dashboard layout: "Default charts · <plugin> <version>", the defaults in rows of two (or, with
+    """The dashboard layout: "Default charts · <plugin> <version>", the defaults in rows (_rows; or, with
     none, why: no run yet, or a plugin version that declares none), "Your charts", the starter link, then
     whatever people placed there (user_part: their layout nodes, kept as they were)."""
     grid = ["ROOT_ID", "GRID_ID"]
@@ -182,17 +201,17 @@ def layout(*, label, version, placed, starter_chart_id, user_part, has_run=False
 
     add(_header("HEADER-aisc-defaults", f"Default charts · {label} {version}".rstrip(), grid))
     if placed:
-        for r, start in enumerate(range(0, len(placed), 2)):
+        for r, charts_in_row in enumerate(_rows(placed)):
             row_id = f"ROW-aisc-defaults-{r}"
             row = {"type": "ROW", "id": row_id, "children": [], "parents": grid,
                    "meta": {"background": "BACKGROUND_TRANSPARENT"}}
             add(row)
-            for chart_id, name in placed[start:start + 2]:
+            for chart_id, name, viz_type in charts_in_row:
                 node_id = f"CHART-aisc-{chart_id[:8]}"
                 row["children"].append(node_id)
                 pos[node_id] = {"type": "CHART", "id": node_id, "children": [], "parents": grid + [row_id],
-                                "meta": {"chartId": 0, "uuid": chart_id, "width": 6, "height": 50,
-                                         "sliceName": name}}
+                                "meta": {"chartId": 0, "uuid": chart_id, "width": 12 // len(charts_in_row),
+                                         "height": 90 if viz_type == "table" else 50, "sliceName": name}}
     elif has_run:
         add(_markdown("MARKDOWN-aisc-no-defaults",
                       f"**{label} {version} declares no default charts.** Its results are in this project: build "
@@ -215,7 +234,7 @@ def layout(*, label, version, placed, starter_chart_id, user_part, has_run=False
         pos[node_id] = node
         if top:
             children.append(node_id)
-    for i, (chart_id, _name) in enumerate(placed):
+    for i, (chart_id, _name, _viz) in enumerate(placed):
         pos[f"CHART-aisc-{chart_id[:8]}"]["meta"]["chartId"] = i + 1      # a placeholder: import remaps it
     return pos
 
@@ -258,7 +277,7 @@ def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset
         name = default_title(v)
         files[f"charts/{cid}.yaml"] = _chart_file(chart_id=cid, name=name, viz_type=viz_type, params=params,
                                                   description=description, dataset_uuid=dataset_uuid)
-        placed.append((cid, name))
+        placed.append((cid, name, viz_type))
     files[f"dashboards/{dashboard_uuid(pid, plugin)}.yaml"] = _dump({
         "dashboard_title": f"{project_name} · {label}", "description": None, "css": None,
         "slug": plugin_slug(pid, plugin), "certified_by": None, "certification_details": None, "published": True,
@@ -269,7 +288,7 @@ def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset
                            has_run=latest_run is not None),
         "metadata": {"native_filter_configuration": native_filters(dataset_uuid, latest_run), "color_scheme": "",
                      "aisc_project": pid, "aisc_plugin": plugin, "aisc_version": version,
-                     "aisc_charts": [cid for cid, _ in placed]}})
+                     "aisc_charts": [cid for cid, _, _ in placed]}})
     return files
 
 
