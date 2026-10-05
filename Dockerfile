@@ -5,10 +5,10 @@
 # source and no customisation is copied in: the config, the extension and the
 # branding are bind-mounted at runtime (see docker-compose.yml). Upgrade
 # Superset by changing the tag on the next line.
-FROM apache/superset:4.1.1
+FROM apache/superset:4.1.4
 
 USER root
-RUN pip install --no-cache-dir immudb-py Authlib psycopg2-binary
+RUN pip install --no-cache-dir immudb-py==1.5.0 Authlib==1.8.0 psycopg2-binary==2.9.13
 # superset_config.py and aisc_ext are mounted here at runtime
 ENV PYTHONPATH=/app/pythonpath
 USER superset

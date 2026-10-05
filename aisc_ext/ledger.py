@@ -31,7 +31,8 @@ from datetime import datetime, timezone
 from sqlalchemy import JSON, Column, DateTime, Integer, MetaData, String, Table, select, update
 
 _log = logging.getLogger(__name__)
-_SLUG = re.compile(r"^aisc-([0-9a-f]{32})$")
+#: a project's dashboard: aisc-<pid hex>, or a plugin's, aisc-<pid hex>-<plugin> (charts.plugin_slug)
+_SLUG = re.compile(r"^aisc-([0-9a-f]{32})(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$")
 
 OUTBOX = Table(
     "aisc_ledger_outbox", MetaData(),
@@ -49,7 +50,7 @@ def on() -> bool:
 
 
 def project_of(slug) -> str | None:
-    """The project a dashboard slug names, ``aisc-<pid hex>``, or None."""
+    """The project a dashboard slug names, ``aisc-<pid hex>[-<plugin>]``, or None."""
     m = _SLUG.match(str(slug or ""))
     if not m:
         return None
@@ -167,9 +168,39 @@ def deliver(engine, send, limit: int = 100) -> tuple[int, int]:
     if not _PASS.acquire(blocking=False):
         return 0, 0
     try:
-        return _deliver(engine, send, limit)
+        return _deliver_locked(engine, send, limit)
     finally:
         _PASS.release()
+
+
+#: The advisory lock a delivery pass holds on Postgres: one pass at a time across Superset's workers.
+_PASS_LOCK_KEY = 0x41495343_4C444752  # "AISCLDGR"
+
+
+def _deliver_locked(engine, send, limit: int) -> tuple[int, int]:
+    """One pass, across processes: on Postgres it holds an advisory lock on a connection of its own for
+    the whole pass, and a pass that finds it taken does nothing. Other databases (the tests' SQLite)
+    have one process."""
+    if engine.dialect.name != "postgresql":
+        return _deliver(engine, send, limit)
+    with engine.connect() as held:
+        got = held.exec_driver_sql("SELECT pg_try_advisory_lock(%s)" % _PASS_LOCK_KEY).scalar()
+        if not got:
+            return 0, 0
+        try:
+            return _deliver(engine, send, limit)
+        finally:
+            held.exec_driver_sql("SELECT pg_advisory_unlock(%s)" % _PASS_LOCK_KEY)
+            held.commit()
+
+
+def deliver_in_background(engine, send, limit: int = 100) -> threading.Thread:
+    """Run one delivery pass in a thread of its own and return it: a write never waits for the platform
+    (up to 5 s a call when it does not answer). The pass's locks keep two passes apart."""
+    worker = threading.Thread(target=deliver, args=(engine, send, limit), name="aisc-ledger-delivery",
+                              daemon=True)
+    worker.start()
+    return worker
 
 
 def _deliver(engine, send, limit: int) -> tuple[int, int]:

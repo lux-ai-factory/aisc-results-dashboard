@@ -70,7 +70,14 @@ NEVER_FOR_A_VIEWER = frozenset({
 })
 
 
+#: The Admin's raw tables: they list every row of every project, with no dashboard check. A viewer
+#: reads comments and review requests on the Review page, which checks the dashboard.
+ADMIN_ONLY_VIEWS = frozenset({"AiscCommentView", "AiscReviewRequestView", "Comments", "Review Requests"})
+
+
 def _viewer_keeps(name: str, view: str) -> bool:
+    if view in ADMIN_ONLY_VIEWS:
+        return False
     if name == "can_write" and view in VIEWER_WRITABLE_VIEWS:
         return True
     if name in NEVER_FOR_A_VIEWER:

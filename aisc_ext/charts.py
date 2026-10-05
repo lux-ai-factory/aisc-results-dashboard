@@ -95,6 +95,12 @@ def chart_settings(v: dict, *, plugin_label: str, columns) -> tuple[str, dict, s
     return viz_type, params, " ".join(notes)
 
 
+def made_by_sync(params: dict, chart_uuid: str) -> bool:
+    """Whether a chart is a default the sync made: its aisc_chart_id is its own uuid. A person's 'Save as'
+    copy keeps the params under a new uuid, so it is theirs, and a sync never deletes it."""
+    return str(params.get("aisc_chart_id") or "") == str(chart_uuid)
+
+
 def plugin_slug(pid: str, plugin: str) -> str:
     """The dashboard of one plugin in one project: aisc-<project hex>-<plugin>, in URL-safe lower case."""
     name = "".join(ch if ch.isalnum() else "-" for ch in plugin.lower()).strip("-")

@@ -4,29 +4,28 @@
 name each result's tool, and the project dashboard carries two native filters with fixed ids,
 Target and Tool, so the launcher's buttons can open it with both set."""
 import importlib
-import json
 import sys
 import types
 
-from tests.test_projects import FakeStore, HEX, PID, _register
 
 TARGET, TOOL = "NATIVE_FILTER-target", "NATIVE_FILTER-tool"
 
 
-def projects():
+# ── R1.1 the tool column ────────────────────────────────────────────────────
+
+
+def _projects():
     return importlib.import_module("aisc_ext.projects")
 
 
-# ── R1.1 the tool column ────────────────────────────────────────────────────
-
 def test_r1_1_engine_results_name_the_tool_never_null():
-    sql = projects().engine_results_sql()
+    sql = _projects().engine_results_sql()
     assert "COALESCE(p.display_name, p.name, 'unknown') AS tool" in " ".join(sql.split())
 
 
 def test_r1_1_the_tool_column_is_declared_after_the_target_ones_as_a_string():
     """Last until 2026-10-04, when the run and the plugins' dimensions came after it (plugin dashboards T2.1)."""
-    columns = projects().ENGINE_RESULTS_COLUMNS
+    columns = _projects().ENGINE_RESULTS_COLUMNS
     names = [n for n, _ in columns]
     assert ("tool", "STRING") in columns and names.index("tool") == names.index("target_status") + 1
 

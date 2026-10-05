@@ -26,8 +26,34 @@ from aisc_ext.projects import _pid, project_role_name, results_dataset_current, 
 _AISC_NODES = ("HEADER-aisc-", "MARKDOWN-aisc-", "ROW-aisc-", "CHART-aisc-")
 
 
+#: The longest a string of a plugin's metadata may be: descriptions run longest.
+_MAX_TEXT = {"description": 2000}
+_MAX_DEFAULT = 300
+#: Never in a plugin's metadata: markup (it becomes chart labels, headers and markdown that every viewer
+#: of the project's dashboards renders) and control characters.
+_UNSAFE = {"<", ">"} | {chr(c) for c in range(32) if c not in (9,)} | {chr(127)}
+
+
+def _checked_text(value, where: str) -> None:
+    """Every string anywhere in a plugin's metadata: no markup or control character, and not too long."""
+    if isinstance(value, str):
+        key = where.rsplit(".", 1)[-1].split("[", 1)[0]
+        if len(value) > _MAX_TEXT.get(key, _MAX_DEFAULT):
+            raise ValueError(f"{where}: longer than {_MAX_TEXT.get(key, _MAX_DEFAULT)} characters")
+        if _UNSAFE & set(value):
+            raise ValueError(f"{where}: holds markup or a control character")
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            _checked_text(str(k), f"{where}.{k}")
+            _checked_text(v, f"{where}.{k}")
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            _checked_text(v, f"{where}[{i}]")
+
+
 def plugin_request(body: dict) -> dict:
-    """The bridge's request body, checked: what is wrong is said before anything reaches Superset."""
+    """The bridge's request body, checked: what is wrong is said before anything reaches Superset. The
+    plugin is third-party code, so every string of its metadata is checked too (_checked_text)."""
     plugin = body.get("plugin")
     if not isinstance(plugin, str) or not plugin.strip():
         raise ValueError("plugin: the engine's name of the plugin, as <package>::<class>")
@@ -40,6 +66,9 @@ def plugin_request(body: dict) -> dict:
     for i, v in enumerate(visualizations):
         if not isinstance(v, dict) or not v.get("chart_type") or not isinstance(v.get("metrics"), list):
             raise ValueError(f"visualizations[{i}]: chart_type and metrics are required")
+    for field in ("plugin", "label", "version", "project_name"):
+        _checked_text(str(body.get(field) or ""), field)
+    _checked_text(visualizations, "visualizations")
     return {"plugin": plugin, "label": label, "version": str(body.get("version") or ""),
             "project_name": str(body.get("project_name") or ""), "visualizations": visualizations}
 

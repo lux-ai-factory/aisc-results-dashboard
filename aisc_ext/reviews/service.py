@@ -48,3 +48,16 @@ def can_resolve(req: dict, *, user_sub: str, user_groups: list[str], is_admin: b
     return (is_admin
             or req.get("requested_by_sub") == user_sub
             or is_for_user(req, user_sub=user_sub, user_groups=user_groups))
+
+
+def visible(rows: list[dict], can_open) -> list[dict]:
+    """The requests on dashboards the caller can open, asking `can_open` once per dashboard."""
+    seen: dict[str, bool] = {}
+    out = []
+    for row in rows:
+        key = str(row.get("dashboard_id"))
+        if key not in seen:
+            seen[key] = bool(can_open(key))
+        if seen[key]:
+            out.append(row)
+    return out

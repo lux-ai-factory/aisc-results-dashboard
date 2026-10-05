@@ -370,3 +370,35 @@ def test_t4_10_the_lock_key_is_a_signed_64_bit_number_of_the_project():
     assert isinstance(key, int) and -2**63 <= key < 2**63
     assert key == project_lock_key(PID.upper())
     assert key != project_lock_key("0b7f5c3e-2d7a-4c1e-9f64-3a1b2c3d4e5f")
+
+
+def test_a_save_as_copy_of_a_default_is_the_persons_chart():
+    """A default carries aisc_chart_id, its own uuid; 'Save as' keeps the params under a new uuid.
+    Such a copy counted as a default the plugin dropped, and the next sync deleted it (code review
+    2026-10-05). Only a chart whose aisc_chart_id is its own uuid is the sync's."""
+    from aisc_ext.charts import made_by_sync
+
+    cid = "8f1c5d2e-0000-4000-8000-000000000001"
+    assert made_by_sync({"aisc_chart_id": cid, "aisc_plugin": "p"}, cid)
+    assert not made_by_sync({"aisc_chart_id": cid, "aisc_plugin": "p"}, "9a9a9a9a-0000-4000-8000-000000000002")
+    assert not made_by_sync({}, cid)
+
+
+def test_a_plugins_metadata_with_markup_is_refused():
+    """The label, titles, descriptions and metric names come from the plugin, which is third-party
+    code, and become chart labels, headers and markdown on every viewer's dashboard (security review
+    2026-10-05; Superset 4.1.1 has a stored XSS through chart labels). A string with markup, a
+    control character, or past its length is refused before anything reaches Superset."""
+    from aisc_ext.plugin_tiles import plugin_request
+
+    good = {"plugin": "pkg::P", "label": "LangBiTe", "version": "0.2.6",
+            "visualizations": [{"chart_type": "bar", "metrics": ["ageism | AISCTarget | en_us"],
+                                "title": "Pass rate per concern", "description": "Share of passed cases."}]}
+    assert plugin_request(good)["label"] == "LangBiTe"
+    for bad in ({"label": "<img src=x onerror=alert(1)>"},
+                {"visualizations": [{"chart_type": "bar", "metrics": ["<script>x</script>"]}]},
+                {"visualizations": [{"chart_type": "bar", "metrics": ["m"], "title": "a\x00b"}]},
+                {"visualizations": [{"chart_type": "bar", "metrics": ["m"], "description": "x" * 5000}]},
+                {"version": "1\n<b>"}):
+        with pytest.raises(ValueError):
+            plugin_request({**good, **bad})

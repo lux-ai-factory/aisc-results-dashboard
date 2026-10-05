@@ -10,8 +10,9 @@ from flask_appbuilder.api import BaseApi, expose, protect, safe
 from aisc_ext import ledger
 from aisc_ext.comments.api import _send_queued
 from aisc_ext.audit import ImmudbClerk, clerk_kwargs_from_env
+from aisc_ext.dashboards import open_dashboard
 from aisc_ext.reviews.service import (
-    STAKEHOLDER_GROUPS, can_resolve, is_for_user, make_request,
+    STAKEHOLDER_GROUPS, can_resolve, is_for_user, make_request, visible,
 )
 
 _clerk = ImmudbClerk(**clerk_kwargs_from_env())
@@ -39,16 +40,35 @@ def _user():
 class ReviewRequestApi(BaseApi):
     resource_name = "aisc_review_request"
     openapi_spec_tag = "AISC Review Requests"
+    # As CommentApi: called with the session cookie, so not exempt from CSRF (Flask-AppBuilder exempts
+    # its APIs unless told otherwise), and every route works on a dashboard the caller can open.
+    csrf_exempt = False
+
+    def _dashboard(self, id_or_slug):
+        """(dashboard, None) when the caller may open it, else (None, response)."""
+        if not id_or_slug:
+            return None, self.response_400(message="dashboard_id is required")
+        dashboard, status = open_dashboard(id_or_slug)
+        if status == 404:
+            return None, self.response_404()
+        if status == 403:
+            return None, self.response_403()
+        return dashboard, None
 
     @expose("/assignees", methods=["GET"])
     @protect(allow_browser_login=True)
     @safe
     def assignees(self):
-        """Who a review can be assigned to: the known users and the stakeholder groups."""
+        """Who a review of ?dashboard_id= can be assigned to: the people whose roles may open that
+        dashboard, and the stakeholder groups."""
         from superset import db
         from flask_appbuilder.security.sqla.models import User
+        dashboard, refused = self._dashboard(request.args.get("dashboard_id"))
+        if refused is not None:
+            return refused
+        roles = {r.name for r in getattr(dashboard, "roles", [])}
         users = [{"sub": u.username, "name": u.get_full_name() or u.username}
-                 for u in db.session.query(User).all()]
+                 for u in db.session.query(User).all() if roles & {r.name for r in u.roles}]
         return self.response(200, users=users, categories=STAKEHOLDER_GROUPS)
 
     @expose("/", methods=["GET"])
@@ -65,6 +85,7 @@ class ReviewRequestApi(BaseApi):
         if request.args.get("status"):
             q = q.filter(AiscReviewRequest.status == request.args["status"])
         rows = [r.to_dict() for r in q.order_by(AiscReviewRequest.created_at.desc()).all()]
+        rows = visible(rows, lambda d: open_dashboard(d)[1] is None)    # only dashboards the caller can open
         if request.args.get("assignee") == "me":
             rows = [r for r in rows
                     if is_for_user(r, user_sub=sub, user_groups=groups)]
@@ -78,6 +99,9 @@ class ReviewRequestApi(BaseApi):
         from superset import db
         sub, name, _, _ = _user()
         b = request.json or {}
+        _dashboard, refused = self._dashboard(b.get("dashboard_id"))
+        if refused is not None:
+            return refused
         data = make_request(
             dashboard_id=b["dashboard_id"], requested_by_sub=sub, requested_by_name=name,
             message=b.get("message", ""), assignee_type=b.get("assignee_type"),
@@ -112,6 +136,9 @@ class ReviewRequestApi(BaseApi):
         row = db.session.query(AiscReviewRequest).filter(AiscReviewRequest.id == pk).with_for_update().one_or_none()
         if not row:
             return self.response_404()
+        _dashboard, refused = self._dashboard(row.dashboard_id)
+        if refused is not None:
+            return self.response_404()                                 # never say it exists
         if not can_resolve(row.to_dict(), user_sub=sub, user_groups=groups, is_admin=is_admin):
             return self.response(403, message="Not allowed to resolve this request")
         action = (request.json or {}).get("action", "done")
@@ -120,7 +147,8 @@ class ReviewRequestApi(BaseApi):
             return self.response_400(message=problem)
         status_before = row.status or "open"
         row.status = "dismissed" if action == "dismiss" else "done"
-        row.resolved_at = datetime.now(timezone.utc); row.resolved_by = name
+        row.resolved_at = datetime.now(timezone.utc)
+        row.resolved_by = name
         ledger.emit(db.session.connection(), ledger.project_of(slug), "dashboard.review.resolved",
                     ledger.review_resolved(row.to_dict(), status_before=status_before, slug=slug,
                                               request=ledger.request_id(request.headers)))

@@ -28,6 +28,15 @@ except KeyError:  # pragma: no cover - the message is the point
         "SUPERSET_SECRET_KEY is not set. Generate one with `openssl rand -hex 32` "
         "and put it in .env; see .env.example."
     ) from None
+# Embedding is on (EMBEDDED_SUPERSET): guest tokens are signed with this install's own secret, never
+# Superset's published default. No default either; without it the dashboard refuses to start.
+try:
+    GUEST_TOKEN_JWT_SECRET = os.environ["SUPERSET_GUEST_TOKEN_SECRET"]
+except KeyError:  # pragma: no cover - the message is the point
+    raise RuntimeError(
+        "SUPERSET_GUEST_TOKEN_SECRET is not set. Generate one with `openssl rand -hex 32` "
+        "and put it in .env; see .env.example."
+    ) from None
 SQLALCHEMY_DATABASE_URI = os.environ["SUPERSET_DB_URI"]
 
 REDIS_HOST = os.environ.get("REDIS_HOST", "superset-redis")
@@ -142,7 +151,8 @@ if os.environ.get("AISC_OAUTH") == "1":
         "token_key": "access_token",
         "remote_app": {
             "client_id": os.environ.get("OIDC_CLIENT_ID") or "superset",
-            "client_secret": os.environ.get("OIDC_CLIENT_SECRET") or "superset-secret",
+            # no fallback: a published secret is no secret (the login is off unless AISC_OAUTH=1)
+            "client_secret": os.environ["OIDC_CLIENT_SECRET"],
             "server_metadata_url": f"{OIDC_ISSUER}/.well-known/openid-configuration",
             "api_base_url": f"{OIDC_ISSUER}/protocol/",
             "client_kwargs": {"scope": "openid email profile"},
@@ -184,9 +194,10 @@ def FLASK_APP_MUTATOR(app):  # noqa: N802 (Superset hook name)
             provider = skip_provider_picker(request.path, request.method, authenticated)
             if provider is None:
                 return None
-            target = url_for("AuthOAuthView.login", provider=provider)
+            # url_for encodes next, so a next with its own query arrives whole
             nxt = request.args.get("next")
-            return redirect(f"{target}?next={nxt}" if nxt else target)
+            return redirect(url_for("AuthOAuthView.login", provider=provider, next=nxt) if nxt
+                            else url_for("AuthOAuthView.login", provider=provider))
 
     with app.app_context():
         # No Superset connection to the shared `platform` database is made

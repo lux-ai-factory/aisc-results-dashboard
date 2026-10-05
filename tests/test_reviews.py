@@ -70,3 +70,36 @@ def test_can_resolve_rules():
 def test_groups_taxonomy():
     assert {"legal", "compliance", "ethics", "technical", "business", "domain"} \
         <= set(STAKEHOLDER_GROUPS)
+
+
+# ── access (code review 2026-10-05) ─────────────────────────────────────────
+# ReviewRequestApi listed, created and resolved review requests of every project, and inherited
+# Flask-AppBuilder's CSRF exemption; CommentApi had been hardened against both.
+
+def test_only_requests_on_dashboards_the_caller_can_open_are_listed():
+    from aisc_ext.reviews.service import visible
+
+    rows = [{"id": 1, "dashboard_id": "aisc-a"}, {"id": 2, "dashboard_id": "aisc-b"},
+            {"id": 3, "dashboard_id": "aisc-a"}]
+    asked = []
+
+    def can_open(d):
+        asked.append(d)
+        return d == "aisc-a"
+
+    assert [r["id"] for r in visible(rows, can_open)] == [1, 3]
+    assert asked == ["aisc-a", "aisc-b"]                  # each dashboard asked once
+
+
+def test_the_api_checks_the_dashboard_on_every_route_and_keeps_csrf():
+    import ast
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parents[1] / "aisc_ext/reviews/api.py").read_text()
+    cls = next(n for n in ast.parse(src).body if isinstance(n, ast.ClassDef) and n.name == "ReviewRequestApi")
+    assigned = {t.id: ast.literal_eval(n.value) for n in cls.body if isinstance(n, ast.Assign)
+                for t in n.targets if isinstance(t, ast.Name) and isinstance(n.value, ast.Constant)}
+    assert assigned.get("csrf_exempt") is False
+    for fn in (n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in ("assignees", "list", "post", "patch")):
+        text = ast.get_source_segment(src, fn)
+        assert "open_dashboard(" in text or "self._dashboard(" in text or "visible(" in text, fn.name

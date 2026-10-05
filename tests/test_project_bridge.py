@@ -13,6 +13,7 @@ realm maps to; the admin keeps Admin.
 """
 import hmac
 import importlib
+from pathlib import Path
 
 import pytest
 
@@ -21,28 +22,8 @@ HEX = PID.replace("-", "")
 OTHER = "0b7f5c3e-2d7a-4c1e-9f64-3a1b2c3d4e5f"
 
 
-class _Missing:
-    """The module under test, imported on first use, so a missing module fails
-    the test that uses it (not its setup, not collection)."""
-
-    def __init__(self, name):
-        self._name = name
-
-    def __getattr__(self, attr):
-        try:
-            mod = importlib.import_module(self._name)
-        except ModuleNotFoundError as exc:
-            pytest.fail(f"WP11 not built yet: {exc}")
-        return getattr(mod, attr)
-
-
 def _load(name):
-    return _Missing(name)
-
-
-@pytest.fixture
-def projects():
-    return _Missing("aisc_ext.projects")
+    return importlib.import_module(name)
 
 
 # ---- bridge authentication -------------------------------------------------
@@ -223,3 +204,16 @@ def test_t5_4_both_sign_in_paths_use_it():
     if gateway.exists():                                # in the aisc checkout
         text = gateway.read_text()
         assert "apply_sign_in(" in text and "sync_ownership=self._sync_dashboard_ownership" in text
+
+
+def test_the_project_connections_take_dashboard_ro_s_password_from_the_environment_only(projects):
+    """The bridge fell back to `dashboard_ro`, the role's own name, so every project connection ran on
+    a password anyone who read the repository had (security review 2026-10-05). It is
+    DASHBOARD_RO_PASSWORD, and without it the bridge registers nothing."""
+    assert projects.dashboard_ro_password({"DASHBOARD_RO_PASSWORD": "from-secrets"}) == "from-secrets"
+    with pytest.raises(LookupError):
+        projects.dashboard_ro_password({})
+    with pytest.raises(LookupError):
+        projects.dashboard_ro_password({"DASHBOARD_RO_PASSWORD": ""})
+    src = (Path(__file__).resolve().parents[1] / "aisc_ext/project_bridge_api.py").read_text()
+    assert '"dashboard_ro")' not in src and "dashboard_ro_password(os.environ)" in src

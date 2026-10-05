@@ -15,9 +15,8 @@ import json
 import sys
 import types
 
-import pytest
 
-from tests.test_projects import FakeStore, HEX, PID, _register, projects  # noqa: F401  (fixture)
+from tests.test_projects import FakeStore, HEX, PID, _register
 
 ENGINE, CONTROLS = f"engine_results_{HEX}", f"controls_answers_{HEX}"
 

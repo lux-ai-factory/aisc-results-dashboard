@@ -7,7 +7,6 @@ metrics, a title, filters and grouping by dimensions. aisc_ext/charts.py, the on
 Superset's chart and dashboard formats, turns them into an export bundle that Superset's own import takes
 (P0, 02-p0-findings.md). Pure Python: no Superset here."""
 import importlib
-import json
 import uuid
 
 import pytest

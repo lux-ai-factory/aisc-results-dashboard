@@ -14,7 +14,9 @@ from flask import request
 from flask_appbuilder.api import BaseApi, expose
 
 from aisc_ext.plugin_tiles import plugin_request, sync_plugin
-from aisc_ext.projects import SupersetStore, authorize_bridge, register_project, unregister_project
+from aisc_ext.projects import (
+    SupersetStore, authorize_bridge, dashboard_ro_password, register_project, unregister_project,
+)
 
 
 class ProjectBridgeApi(BaseApi):
@@ -35,11 +37,11 @@ class ProjectBridgeApi(BaseApi):
         slug = str(body.get("slug") or pid)
         name = str(body.get("name") or slug)
         try:
-            register_project(
-                pid, slug, name,
-                store=SupersetStore(),
-                controls_password=os.environ.get("DASHBOARD_RO_PASSWORD", "dashboard_ro"),
-            )
+            password = dashboard_ro_password(os.environ)
+        except LookupError as exc:
+            return self.response(503, message=str(exc))
+        try:
+            register_project(pid, slug, name, store=SupersetStore(), controls_password=password)
         except ValueError as exc:
             return self.response_400(message=str(exc))
         return self.response(200, message="registered")

@@ -24,11 +24,12 @@ _clerk = ImmudbClerk(**clerk_kwargs_from_env())
 
 
 def _send_queued():
-    """Post the queued ledger events to the platform. A failure is logged and never breaks the request."""
+    """Post the queued ledger events to the platform, in a thread of its own: the request that queued
+    them does not wait for the platform. A failure is logged and never breaks the request."""
     from superset import db
 
     try:
-        ledger.deliver(db.engine, ledger.http_sender())
+        ledger.deliver_in_background(db.engine, ledger.http_sender())
     except Exception:                                                   # noqa: BLE001
         import logging
 

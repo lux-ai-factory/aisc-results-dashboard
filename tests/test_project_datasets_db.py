@@ -22,7 +22,6 @@ reduced to the columns the dataset reads.
 The init files, migrations and templates are read from the aisc repo this
 checkout sits in (apps/results-dashboard), so these tests run only there.
 """
-import importlib
 import os
 import pathlib
 import re
@@ -296,26 +295,6 @@ def _seed_targets(db):
          + _run_sql(E_STALE, "three", [("target", MIRROR_B)], M_B, 0.3)
          + _run_sql(E_NO_INPUT, "four", [("dataset", MIRROR_A)], M_NO_INPUT, 0.4)
          + _run_sql(E_NOT_TARGET, "five", [("target", PLAIN)], M_NOT_TARGET, 0.5), db=db)
-
-
-class _Missing:
-    """The module under test, imported on first use, so a missing module fails
-    the test that uses it (not its setup, not collection)."""
-
-    def __init__(self, name):
-        self._name = name
-
-    def __getattr__(self, attr):
-        try:
-            mod = importlib.import_module(self._name)
-        except ModuleNotFoundError as exc:
-            pytest.fail(f"WP11 not built yet: {exc}")
-        return getattr(mod, attr)
-
-
-@pytest.fixture
-def projects():
-    return _Missing("aisc_ext.projects")
 
 
 def _rows(out):

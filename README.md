@@ -4,7 +4,7 @@ The results dashboard is step 5 of the AI Assessment Sandbox Configurator (AISC)
 the results of an assessment are analysed. AISC is a platform for assessing AI systems
 in six steps: 1 qualification, 2 control objectives, 3 install plugins and tools, 4
 execute tests and address controls, 5 analyse results on this dashboard, 6 compose the
-report. This repository is the dashboard: stock Apache Superset 4.1.1, customised only
+report. This repository is the dashboard: stock Apache Superset 4.1.4, customised only
 through Superset's configuration file and a small Python package (`aisc_ext`). For
 every AISC project it builds one dashboard of that project's results: the execution
 engine's scores by AI card version and by assessment target, and the answers to the
@@ -30,7 +30,7 @@ is on, to the project's ledger.
                                                              └─ immudb (audit log)
 ```
 
-- **No fork of Superset.** The image is `apache/superset:4.1.1` plus three Python packages
+- **No fork of Superset.** The image is `apache/superset:4.1.4` plus three Python packages (pinned)
   (`Dockerfile`). `superset_config.py`, `aisc_ext/` and `branding/` are bind-mounted at
   runtime, and every customisation uses a documented Superset hook:
 
@@ -43,6 +43,9 @@ is on, to the project's ledger.
   | Embedding in other pages | `FEATURE_FLAGS`, Talisman `frame-ancestors` | `superset_config.py` |
   | Feature and chart lockdown | `FEATURE_FLAGS`, `VIZ_TYPE_DENYLIST` | `superset_config.py` |
 
+  Before moving to another Superset tag, run the aisc repo's `scripts/check-superset-upgrade.sh
+  <image>`: it runs that image with this overlay in throwaway containers and opens every plugin
+  tile in a browser.
 - **One dashboard per project.** When the platform creates a project it calls the bridge
   (`POST /api/v1/aisc_project/<pid>`, header `X-AISC-Bridge-Token`). `aisc_ext/projects.py`
   then creates, for that project: a connection `AISC Controls <slug>` to the project's own
@@ -61,11 +64,14 @@ is on, to the project's ledger.
   shows a dashboard in an iframe with its comment threads beside it. Comments can be about
   the whole dashboard or one chart; review requests go to a person or to a stakeholder
   group (legal, compliance, ethics, technical, business, domain). The REST APIs are
-  `/api/v1/aisc_comment` and `/api/v1/aisc_review_request`. Both live in Superset's
-  metadata database. A deleted comment is hidden, not removed.
+  `/api/v1/aisc_comment` and `/api/v1/aisc_review_request`. Both work only on dashboards the
+  caller can open, and neither is exempt from CSRF. Both live in Superset's metadata database.
+  A deleted comment is hidden, not removed. The raw *Comments* and *Review Requests* tables in
+  the menu list every project's rows, so they are the Admin's only.
 - **Ledger.** With `LEDGER_MODE` set to `record` or `enforce`, each comment and review
   change also queues an event in the table `aisc_ledger_outbox`, in the same transaction.
-  The events are then posted, in order, to the platform's internal route
+  The events are then posted, in order and off the request path (one pass at a time across
+  Superset's workers, an advisory lock on Postgres), to the platform's internal route
   (`POST /internal/projects/<pid>/ledger/events`), which adds them to the project's ledger.
   When the platform cannot be reached (or the token or address is wrong) the events stay
   queued for the next pass; an event the platform refuses (409, 413, 422) is kept with
@@ -122,14 +128,14 @@ Prerequisites: Docker with Compose v2; Python 3.10 or newer and
 ```bash
 git clone --branch feat/unified-modules https://github.com/lux-ai-factory/aisc-results-dashboard.git
 cd aisc-results-dashboard
-cp .env.example .env    # then set SUPERSET_SECRET_KEY, SUPERSET_DB_PASSWORD and IMMUDB_PASSWORD,
-                        # each to the output of: openssl rand -hex 32
-./scripts/bootstrap.sh
+./scripts/bootstrap.sh   # makes .env from .env.example, with every empty secret generated
 ```
 
-`bootstrap.sh` builds the image, pulls Postgres 16, Redis 7 and immudb, starts
-`docker-compose.yml`, runs the Superset migrations and creates a local admin user
-(`ADMIN_USER` / `ADMIN_PASSWORD`, default `admin` / `admin`). Superset is then on
+`bootstrap.sh` makes `.env` on its first run (every secret `.env.example` leaves empty is
+generated with `openssl rand`, kept on later runs and never printed; `--env-only` stops there),
+builds the image, pulls Postgres 16, Redis 7 and immudb, starts `docker-compose.yml`, runs the
+Superset migrations and creates a local admin user (`ADMIN_USER`, default `admin`; its password is
+`ADMIN_PASSWORD` in `.env`). Superset is then on
 **http://localhost:8188**. It is safe to re-run.
 
 This stack has its own Postgres, Redis and immudb and no gateway, so sign-in is
@@ -153,6 +159,7 @@ the aisc repo's `docker-compose.development.yml` sets.
 | Variable | Meaning | Default |
 |---|---|---|
 | `SUPERSET_SECRET_KEY` | Signs session cookies. Required: Superset refuses to start without it. | none |
+| `SUPERSET_GUEST_TOKEN_SECRET` | Signs guest tokens (embedding is on). Required, like the one above. | none |
 | `SUPERSET_DB_URI` | SQLAlchemy URI of Superset's metadata database. Required. | none (stack: `.../superset` on Postgres) |
 | `REDIS_HOST`, `REDIS_PORT` | Redis cache. | `superset-redis`, `6379` |
 | `LAUNCHER_URL` | Where the logo links to: the AISC launcher's project list. | `http://localhost:8100/` |
@@ -162,17 +169,17 @@ the aisc repo's `docker-compose.development.yml` sets.
 | `EMBED_ALLOWED_ORIGINS` | Comma-separated origins allowed to frame the dashboard. When set, the session cookie becomes `SameSite=None; Secure`, so HTTPS is needed. | empty (no framing) |
 | `AISC_MEMBERSHIP_DB_URI` | DSN of the `platform` database for memberships at sign-in. Must connect as `dashboard_ro`. Unset: nobody gets a project role. | unset (stack: `dashboard_ro` on `localhost:5432/platform`) |
 | `AISC_PROJECT_DB_HOSTPORT` | Host and port of the project databases, used in each project connection. | `postgres:5432` (stack: `localhost:5432`) |
-| `DASHBOARD_RO_PASSWORD` | Password of `dashboard_ro` in the project connections. | `dashboard_ro` |
+| `DASHBOARD_RO_PASSWORD` | Password of `dashboard_ro` in the project connections. Required: without it the bridge registers nothing (503). | none (stack: from `scripts/secrets.sh`) |
 | `DASHBOARD_BRIDGE_TOKEN` | Shared secret the platform sends to the bridge. Unset: the bridge refuses every call. | unset (stack: from `scripts/secrets.sh`) |
 | `AISC_AUDIT_ENABLED` | Write the audit log to immudb (`true` / `false`). | `true` |
 | `IMMUDB_HOST`, `IMMUDB_PORT` | immudb server for the audit log. | `immudb`, `3322` |
-| `IMMUDB_USER`, `IMMUDB_PASSWORD` | immudb credentials. Set the password; the code's fallback is immudb's well-known default. | `immudb`, see left |
+| `IMMUDB_USER`, `IMMUDB_PASSWORD` | immudb credentials. Without a password no audit row is written, and a warning is logged. | `immudb`, none |
 | `LEDGER_MODE` | `off`, `record` or `enforce`. `record` and `enforce` queue ledger events; any other value is off. | `off` |
 | `PLATFORM_URL` | Base URL of the platform service, for ledger events. Unset: events stay queued. | unset (stack: `http://172.17.0.1:8000`) |
 | `PLATFORM_LEDGER_DASHBOARD_TOKEN` | Token for the platform's internal ledger route. Unset: events stay queued. | unset (stack: from `scripts/secrets.sh`) |
 | `AISC_OAUTH` | `1` turns on Superset's own Keycloak sign-in (standalone use). | off (stack: `0`) |
 | `OIDC_ISSUER` | Keycloak realm URL, with `AISC_OAUTH=1`. | `http://keycloak.localhost:8080/realms/dashboard` |
-| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Keycloak client, with `AISC_OAUTH=1`. Set the secret; the code's fallback is a development value. | `superset`, see left |
+| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Keycloak client, with `AISC_OAUTH=1`. The secret is required then. | `superset`, none |
 
 Used only by the standalone compose files: `SUPERSET_DB_PASSWORD` (metadata Postgres,
 required), `AISC_NETWORK` (network of the aisc stack, default `aisc_backend`), and
@@ -202,7 +209,7 @@ The unit tests need no Docker, database or Superset install. From the repository
 
 ```bash
 PYTHONPATH=. uv run --no-project --with pytest --with sqlalchemy --with psycopg2-binary \
-  --with authlib --with flask --with requests \
+  --with authlib --with flask --with requests --with pyyaml \
   python -m pytest -q -p no:cacheprovider tests --ignore tests/test_sso_login.py
 ```
 
@@ -221,7 +228,7 @@ docker run --rm -d --name aisc-t-dash-$(openssl rand -hex 3) -p 127.0.0.1:<free 
   -e POSTGRES_USER=aisc-postgres-user -e POSTGRES_PASSWORD=<pw> \
   -e POSTGRES_DB=platform postgres:15-alpine
 AISC_DASHBOARD_TEST_PG_CONTAINER=aisc-t-dash-<hex> PYTHONPATH=. uv run --no-project \
-  --with pytest --with sqlalchemy --with psycopg2-binary --with authlib --with flask --with requests \
+  --with pytest --with sqlalchemy --with psycopg2-binary --with authlib --with flask --with requests --with pyyaml \
   python -m pytest -q -p no:cacheprovider tests/test_project_datasets_db.py tests/test_isolation_dashboard_db.py
 ```
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -41,6 +42,18 @@ def test_a_dashboards_slug_names_its_project():
     assert ledger.project_of("aisc-" + "0" * 31) is None
     assert ledger.project_of("sales") is None
     assert ledger.project_of(None) is None
+
+
+def test_a_plugin_dashboards_slug_names_its_project_too():
+    """Every project dashboard is a plugin's since 2026-10-04: aisc-<hex>-<plugin> (charts.plugin_slug).
+    project_of knew only aisc-<hex>, so every comment and review write on one was refused (code review
+    2026-10-05)."""
+    from aisc_ext.charts import plugin_slug
+
+    slug = plugin_slug(PID, "aisc-plugin-langbite::LangBiteEvaluationPlugin")
+    assert ledger.project_of(slug) == PID
+    assert ledger.hint_problem(slug, slug) is None
+    assert ledger.project_of(SLUG + "-") is None and ledger.project_of(SLUG + "-Bad_Name") is None
 
 
 def test_only_a_uuid_request_id_is_cited():
@@ -205,3 +218,68 @@ def test_m9_review_one_pass_at_a_time(engine):
         return 202
     assert ledger.deliver(engine, send) == (1, 0)
     assert inner == [(0, 0)]
+
+
+def test_one_delivery_pass_at_a_time_across_processes():
+    """The pass was serialised by a threading.Lock only, and Superset runs several gunicorn workers:
+    two could select the same undelivered rows and post them twice, or out of order (code review
+    2026-10-05). On Postgres a pass holds an advisory lock, so a second pass anywhere does nothing.
+    Needs a throwaway Postgres: AISC_DASHBOARD_TEST_PG_URL (never the stack's, port 5432)."""
+    import os
+    import threading as th
+
+    url = os.environ.get("AISC_DASHBOARD_TEST_PG_URL", "")
+    if not url or ":5432/" in url:
+        pytest.skip("AISC_DASHBOARD_TEST_PG_URL (a throwaway Postgres) is not set")
+    engine = create_engine(url)
+    ledger.OUTBOX.metadata.drop_all(engine)
+    ledger.OUTBOX.metadata.create_all(engine)
+    with engine.begin() as conn:
+        for i in range(3):
+            conn.execute(ledger.OUTBOX.insert().values(project_pid=PID, event={"event_id": str(i)},
+                                                       queued_at=datetime.now(timezone.utc)))
+    sent, inside, release = [], th.Event(), th.Event()
+
+    def slow(pid, event):
+        sent.append(event["event_id"])
+        inside.set()
+        release.wait(5)
+        return 201
+
+    first = th.Thread(target=ledger._deliver_locked, args=(engine, slow, 100))
+    first.start()
+    inside.wait(5)
+    # another process's pass, while the first holds the lock: nothing is sent twice
+    assert ledger._deliver_locked(engine, lambda p, e: sent.append("again " + e["event_id"]) or 201, 100) == (0, 0)
+    release.set()
+    first.join(5)
+    assert sent == ["0", "1", "2"]
+    ledger.OUTBOX.metadata.drop_all(engine)
+    engine.dispose()
+
+
+def test_delivery_runs_off_the_request_path(tmp_path, monkeypatch):
+    """Each comment and review write posted the queued events itself, up to 5 s per call while the
+    platform did not answer (code review 2026-10-05). The pass now runs in a thread of its own."""
+    import threading as th
+    import time
+
+    monkeypatch.setenv("LEDGER_MODE", "record")
+    # a file, not sqlite:// (which gives each thread its own empty database)
+    engine = create_engine(f"sqlite:///{tmp_path / 'outbox.db'}")
+    ledger.OUTBOX.metadata.create_all(engine)
+    with engine.begin() as conn:
+        ledger.emit(conn, PID, "dashboard.comment.created", ledger.comment_created(COMMENT, slug=SLUG, request=REQUEST))
+    release, sent = th.Event(), []
+
+    def slow(pid, event):
+        release.wait(5)
+        sent.append(event["action"])
+        return 201
+
+    started = time.monotonic()
+    worker = ledger.deliver_in_background(engine, slow)
+    assert time.monotonic() - started < 0.5 and sent == []
+    release.set()
+    worker.join(5)
+    assert sent == ["dashboard.comment.created"]

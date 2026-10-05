@@ -242,6 +242,15 @@ def unregister_project(pid, *, store) -> None:
                 store.delete(kind, key)
 
 
+def dashboard_ro_password(env) -> str:
+    """dashboard_ro's password for the project connections, from DASHBOARD_RO_PASSWORD only (made by the
+    aisc repo's scripts/secrets.sh). Raises LookupError without one: the role's own name is no password."""
+    password = (env.get("DASHBOARD_RO_PASSWORD") or "").strip()
+    if not password:
+        raise LookupError("DASHBOARD_RO_PASSWORD is not set: run the aisc repo's scripts/secrets.sh")
+    return password
+
+
 def authorize_bridge(headers, env) -> int | None:
     """401 unless the call carries the bridge token; None when it may go on.
 
@@ -538,6 +547,8 @@ class SupersetStore:
         """{"position", "charts": [{"id", "uuid", "aisc"}]} of a dashboard, or None. aisc: made by a sync."""
         from superset.models.dashboard import Dashboard  # type: ignore
 
+        from aisc_ext import charts
+
         found = self._db().session.query(Dashboard).filter_by(slug=slug).one_or_none()
         if found is None:
             return None
@@ -547,7 +558,8 @@ class SupersetStore:
                 params = json.loads(piece.params or "{}")
             except ValueError:
                 params = {}
-            out.append({"id": piece.id, "uuid": str(piece.uuid), "aisc": "aisc_chart_id" in params})
+            out.append({"id": piece.id, "uuid": str(piece.uuid),
+                        "aisc": charts.made_by_sync(params, str(piece.uuid))})
         return {"position": json.loads(found.position_json or "{}"), "charts": out}
 
     def link_charts(self, slug, chart_uuids):

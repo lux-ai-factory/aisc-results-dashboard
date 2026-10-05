@@ -8,10 +8,12 @@ request. The EVENT_LOGGER that feeds it is aisc_ext.event_logger."""
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from datetime import datetime, timezone
 
+_log = logging.getLogger(__name__)
 _TABLE = "superset_audit"
 _MAX_WRITE_RETRIES = 3       # immudb aborts concurrent transactions ("tx read conflict")
 _RETRY_BACKOFF_S = 0.05
@@ -19,13 +21,14 @@ _CONNECT_RETRY_COOLDOWN_S = 30.0  # wait this long after a failed connect before
 
 
 def clerk_kwargs_from_env() -> dict:
-    """ImmudbClerk keyword arguments from the environment (defaults suit a local stack)."""
+    """ImmudbClerk keyword arguments from the environment (defaults suit a local stack; the
+    password has none: immudb's own default is not one to run on)."""
     return {
         "enabled": os.environ.get("AISC_AUDIT_ENABLED", "true").lower() == "true",
         "host": os.environ.get("IMMUDB_HOST", "immudb"),
         "port": int(os.environ.get("IMMUDB_PORT", "3322")),
         "user": os.environ.get("IMMUDB_USER", "immudb"),
-        "password": os.environ.get("IMMUDB_PASSWORD", "immudb"),
+        "password": os.environ.get("IMMUDB_PASSWORD", ""),
     }
 
 
@@ -44,7 +47,7 @@ def build_audit_row(*, actor: str, action: str, target: str,
 
 class ImmudbClerk:
     def __init__(self, enabled: bool = True, host: str = "immudb", port: int = 3322,
-                 user: str = "immudb", password: str = "immudb",
+                 user: str = "immudb", password: str = "",
                  connect_timeout: float = 2.0):
         self.enabled = enabled
         self.host, self.port = host, port
@@ -62,6 +65,11 @@ class ImmudbClerk:
         # down does not add seconds to every logged request.
         if time.monotonic() < self._next_retry_at:
             return None
+        if not self.password:
+            # immudb's own default is no password to run on: say so, and wait like a failed connect
+            _log.warning("audit: IMMUDB_PASSWORD is not set; no audit row is written")
+            self._next_retry_at = time.monotonic() + _CONNECT_RETRY_COOLDOWN_S
+            return None
         try:
             from immudb import ImmudbClient
 
@@ -76,7 +84,7 @@ class ImmudbClerk:
             )
             self._client = client
         except Exception as exc:  # never let auditing break the request path
-            print(f"[aisc-audit] immudb unavailable, auditing disabled: {exc}")
+            _log.warning("audit: immudb unavailable, no audit row is written: %s", exc)
             self._client = None
             self._next_retry_at = time.monotonic() + _CONNECT_RETRY_COOLDOWN_S
         return self._client

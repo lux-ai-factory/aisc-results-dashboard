@@ -168,3 +168,18 @@ def test_no_gamma_to_derive_from_is_no_role_rather_than_an_empty_one():
     from aisc_ext.viewer_role import ensure_viewer_role
 
     assert ensure_viewer_role(_SecurityManager({})) is None
+
+
+def test_a_viewer_never_gets_the_raw_comment_and_review_tables():
+    """Assessment > Comments and > Review Requests list every row of every project, with no
+    dashboard check; Gamma's can_list on them reached the viewer, so a viewer of project A read
+    project B's comments (code review 2026-10-05). They are the Admin's; a viewer reads comments
+    on the Review page, which checks the dashboard."""
+    from aisc_ext.security import viewer_permissions_from
+
+    pairs = [("can_list", "AiscCommentView"), ("can_show", "AiscCommentView"),
+             ("can_list", "AiscReviewRequestView"), ("can_show", "AiscReviewRequestView"),
+             ("menu_access", "Comments"), ("menu_access", "Review Requests"),
+             ("can_read", "Chart"), ("menu_access", "Review dashboards")]
+    kept = set(viewer_permissions_from(pairs))
+    assert kept == {("can_read", "Chart"), ("menu_access", "Review dashboards")}

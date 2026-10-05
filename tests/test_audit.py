@@ -44,7 +44,7 @@ def test_clerk_kwargs_from_env_defaults(monkeypatch):
         monkeypatch.delenv(var, raising=False)
     kw = clerk_kwargs_from_env()
     assert kw == {"enabled": True, "host": "immudb", "port": 3322,
-                  "user": "immudb", "password": "immudb"}
+                  "user": "immudb", "password": ""}  # no password of its own (2026-10-05)
 
 
 def test_clerk_kwargs_from_env_overrides(monkeypatch):
@@ -107,3 +107,19 @@ def test_failed_connect_is_cached_with_backoff(monkeypatch):
     # actual immudb connection attempt must be throttled: assert the clerk
     # tracks a failure timestamp so it can skip real reconnects.
     assert hasattr(clerk, "_next_retry_at")
+
+
+def test_the_clerk_has_no_password_default_and_says_when_it_has_none(caplog):
+    """ImmudbClerk() logged in as immudb/immudb, the image's default; and with no password it only
+    printed that auditing was off (code review 2026-10-05). It has no default now, and an enabled
+    clerk without a password logs a warning and does not try."""
+    import inspect
+    import logging
+
+    from aisc_ext.audit import ImmudbClerk
+
+    assert inspect.signature(ImmudbClerk).parameters["password"].default == ""
+    clerk = ImmudbClerk(enabled=True, password="")
+    with caplog.at_level(logging.WARNING, logger="aisc_ext.audit"):
+        assert clerk._connect() is None
+    assert "IMMUDB_PASSWORD" in caplog.text

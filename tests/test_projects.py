@@ -21,10 +21,7 @@ runtime and a dict backs here. Every object it writes carries
 `aisc_project: <pid>`, which is how unregister finds what is P's.
 """
 import copy
-import importlib
 import re
-import sys
-import types
 import uuid
 
 import pytest
@@ -33,26 +30,6 @@ PID = "1e722ea2-4ce3-47fa-81bf-11a6b53ad679"
 HEX = PID.replace("-", "")
 OTHER = "0b7f5c3e-2d7a-4c1e-9f64-3a1b2c3d4e5f"
 OTHER_HEX = OTHER.replace("-", "")
-
-
-class _Missing:
-    """The module under test, imported on first use, so a missing module fails
-    the test that uses it (not its setup, not collection)."""
-
-    def __init__(self, name):
-        self._name = name
-
-    def __getattr__(self, attr):
-        try:
-            mod = importlib.import_module(self._name)
-        except ModuleNotFoundError as exc:
-            pytest.fail(f"WP11 not built yet: {exc}")
-        return getattr(mod, attr)
-
-
-@pytest.fixture
-def projects():
-    return _Missing("aisc_ext.projects")
 
 
 class FakeStore:

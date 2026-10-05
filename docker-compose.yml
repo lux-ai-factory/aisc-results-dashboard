@@ -12,6 +12,7 @@ name: aisc-results-dashboard
 x-superset-env: &superset-env
   SUPERSET_DB_URI: postgresql+psycopg2://superset:${SUPERSET_DB_PASSWORD:?see .env.example: openssl rand -hex 32}@superset-db:5432/superset
   SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?see .env.example: openssl rand -hex 32}
+  SUPERSET_GUEST_TOKEN_SECRET: ${SUPERSET_GUEST_TOKEN_SECRET:?see .env.example: openssl rand -hex 32}
   REDIS_HOST: superset-redis
   REDIS_PORT: "6379"
   IMMUDB_HOST: immudb
