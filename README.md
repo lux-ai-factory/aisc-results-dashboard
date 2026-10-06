@@ -87,9 +87,9 @@ this repository. Two compose services in the aisc repo's `docker-compose.develop
 use it:
 
 - `dashboard-migrate` runs `superset db upgrade && superset init` once and exits;
-- `dashboard` is the server. It uses host networking and listens on
-  `DASHBOARD_BIND_ADDRESS:DASHBOARD_INTERNAL_PORT` (default `172.17.0.1:8189`). Caddy
-  publishes it at **http://localhost:8188** behind the AISC gateway. The aisc repo's
+- `dashboard` is the server. It runs on the compose network and listens on
+  `DASHBOARD_INTERNAL_PORT` (default 8189), publishing nothing; Caddy reaches it as
+  `dashboard:8189` and publishes it at **http://localhost:8188** behind the AISC gateway. The aisc repo's
   `dashboard-gateway/superset_gateway_config.py` loads this repo's `superset_config.py`
   and signs the user in from the gateway's verified token, so `AISC_OAUTH` is `0` there and
   there is no local admin account.
