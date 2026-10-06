@@ -114,6 +114,24 @@ def test_t3_1_kinds_superset_draws_differently_become_tables_and_say_so(charts, 
 
 # ── T3.2 filters ─────────────────────────────────────────────────────────────
 
+def test_a_percent_chart_shows_its_ratios_as_percent(charts):
+    """A pass rate is a ratio from 0 to 1: LangBiTe's concern that passed showed as "1" (workshop 2026-10-06).
+    A chart that says value_format "percent" is formatted so, whatever its kind."""
+    _, bars, _ = settings(charts, viz("bars", ["Pass rate"], group_by_dimensions=["concern"], value_format="percent"))
+    _, line, _ = settings(charts, viz("line", ["Pass rate"], value_format="percent"))
+    _, pie, _ = settings(charts, viz("pie", ["Pass rate"], value_format="percent"))
+    _, table, _ = settings(charts, viz("table", ["Pass rate"], value_format="percent"))
+    assert bars["y_axis_format"] == ".0%" and line["y_axis_format"] == ".0%"
+    assert pie["number_format"] == ".0%"
+    assert table["column_config"] == {"Pass rate": {"d3NumberFormat": ".0%"}}
+
+
+def test_a_chart_without_a_format_keeps_supersets_own(charts):
+    for kind in ("bars", "line", "pie", "table"):
+        _, params, _ = settings(charts, viz(kind, ["psi"]))
+        assert not {"y_axis_format", "number_format", "column_config"} & set(params), kind
+
+
 def test_t3_2_every_chart_keeps_to_its_plugin_and_its_metrics(charts):
     _, params, _ = settings(charts, DRIFT[2])
     f = filters_of(params)

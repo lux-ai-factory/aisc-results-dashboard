@@ -27,6 +27,8 @@ LATEST_RUN_METRIC = "latest_run"
 TABLE_ROW_LIMIT = 50000
 #: Superset's chart type per MetricVisualization chart type; the rest are drawn as tables (and say so)
 _KINDS = {"bars": "echarts_timeseries_bar", "line": "echarts_timeseries_line", "table": "table", "pie": "pie"}
+#: Superset's number format for a chart whose values are ratios from 0 to 1 (value_format "percent")
+PERCENT = ".0%"
 _NAMESPACE = uuid.UUID("6f2a7c1e-4b3d-4e8a-9c5f-0d1e2f3a4b5c")
 _VERSION = "1.0.0"
 _TIMESTAMP = "2026-10-04T00:00:00+00:00"
@@ -82,6 +84,13 @@ def chart_settings(v: dict, *, plugin_label: str, columns) -> tuple[str, dict, s
         params = {"query_mode": "aggregate", "groupby": ["run"] + groups + ([] if single else ["metric"]),
                   "metrics": [_score("AVG", metrics[0] if single else "score")], "all_columns": [],
                   "percent_metrics": [], "server_pagination": False, "page_length": 50, "include_search": True}
+    if _value(v.get("value_format")) == "percent":
+        if viz_type == "pie":
+            params["number_format"] = PERCENT
+        elif viz_type == "table":
+            params["column_config"] = {params["metrics"][0]["label"]: {"d3NumberFormat": PERCENT}}
+        else:
+            params["y_axis_format"] = PERCENT
     params.update({"viz_type": viz_type, "adhoc_filters": filters,
                    "row_limit": TABLE_ROW_LIMIT if viz_type == "table" else 1000})
 
