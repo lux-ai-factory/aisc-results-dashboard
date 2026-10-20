@@ -1,7 +1,7 @@
 # Security Policy
 
 This application handles authentication (optionally via Keycloak SSO), role-based
-access control, and a tamper-evident audit trail — security reports are taken
+access control, and ledger events for comments and reviews — security reports are taken
 seriously.
 
 ## Reporting a vulnerability
@@ -16,17 +16,17 @@ assessment if known.
 
 ## Scope
 
-In scope: everything in this repository — `aisc_ext/` (comments, reviews, audit,
+In scope: everything in this repository — `aisc_ext/` (comments, reviews, ledger outbox,
 SSO/role mapping), `superset_config.py` (lockdown posture), the nginx sidecar
 (CSP rewrite, asset injection) and the injected `aisc/comments.js` widget.
 
 Out of scope: vulnerabilities in Apache Superset itself (report upstream via
-https://superset.apache.org/docs/security/), in Keycloak, or in immudb.
+https://superset.apache.org/docs/security/), or in Keycloak.
 
 ## Deployment hardening checklist
 
-- Regenerate `SUPERSET_SECRET_KEY`, `SUPERSET_DB_PASSWORD`, and the immudb
-  credentials (`.env`) — never deploy the dev defaults.
+- Regenerate `SUPERSET_SECRET_KEY`, `SUPERSET_DB_PASSWORD`, and
+  `SUPERSET_GUEST_TOKEN_SECRET` (`.env`) — never deploy the dev defaults.
 - Replace the bootstrap `admin` account password immediately.
 - Connect the results database with a **read-only** DB user.
 - `PREVENT_UNSAFE_DB_CONNECTIONS` is on — keep it on (rejects unsafe DB URIs).

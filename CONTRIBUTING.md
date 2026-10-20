@@ -32,7 +32,7 @@ Thank you for contributing to the AISC project!
 
 ## Repository-specific notes
 
-- **Test-first:** domain logic (`aisc_ext/*/service.py`, `aisc_ext/audit.py`,
+- **Test-first:** domain logic (`aisc_ext/*/service.py`,
   `aisc_ext/security.py`) is unit-tested without Superset. Run the suite before
   any PR: `python -m venv .venv && . .venv/bin/activate && pip install pytest && python -m pytest`.
 - **Divergence policy:** this project deliberately does **not** patch Apache

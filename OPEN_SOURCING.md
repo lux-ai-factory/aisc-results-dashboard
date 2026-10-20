@@ -38,8 +38,8 @@ Full detail lives in the README; the one-paragraph version for newcomers:
 
 - **Differs:** stock Superset + (a) config-only branding, theme, feature-flag
   lockdown, and gated Keycloak SSO; (b) a small Python extension package
-  (`aisc_ext/`) adding native comments, review-request/task assignment, and a
-  tamper-evident immudb audit trail; (c) an nginx sidecar that injects the
+  (`aisc_ext/`) adding native comments, review-request/task assignment, and
+  ledger events for comments and reviews (AISC platform); (c) an nginx sidecar that injects the
   comments widget + CSS and rewrites CSP — **no Superset source is patched**.
   See README §2 (divergence table) and §3 (each customization).
 - **Used as:** the **Collaborative Assessment Dashboard** of the AI Assessment
@@ -103,7 +103,6 @@ them — but a **published image** does, so list them in `NOTICE`:
 | Package | License (verify) | Note |
 |---|---|---|
 | `Authlib` | BSD-3-Clause | permissive |
-| `immudb-py` | Apache-2.0 | permissive |
 | `psycopg2-binary` | **LGPL-3.0 (with exceptions)** | ⚠️ weak-copyleft — fine when used unmodified/dynamically, but **flag it**: if you ship an image, note LGPL and don't statically modify it. Consider `psycopg[binary]` (LGPL too) or document the dependency clearly. |
 
 Superset itself bundles many transitive deps under their own licenses; those are
@@ -196,8 +195,8 @@ public repo, (d) that the audit/SSO security posture is acceptable to publish.
       Superset" (README/FEATURES/COLORS titles; `APP_NAME` was already "AI Assessment Sandbox").
 - [x] Governance files: `CONTRIBUTING.md` (org template + repo notes, implicit CLA),
       `GOVERNANCE.md` (SnT+LIST model), `SECURITY.md`, `MAINTAINERS.md`, org CLA texts.
-- [x] **Secrets sweep:** `SUPERSET_SECRET_KEY`, `SUPERSET_DB_PASSWORD`,
-      `IMMUDB_USER`/`IMMUDB_PASSWORD` are env-driven via `.env` (dev defaults
+- [x] **Secrets sweep:** `SUPERSET_SECRET_KEY`, `SUPERSET_DB_PASSWORD`
+      are env-driven via `.env` (dev defaults
       documented as dev-only; see `SECURITY.md` hardening checklist).
 - [ ] Confirm dependency licenses at the pinned versions (§3.4) at release time.
 - [ ] Institutional sign-off (§5.3) — LIST/AI Factory legal + maintainers.

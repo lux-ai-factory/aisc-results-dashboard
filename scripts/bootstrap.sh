@@ -2,24 +2,49 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
 #
-# One-shot: download the stock Superset instance + supporting images, start the
-# overlay, and initialise the metadata DB + admin user. Idempotent-ish: safe to
-# re-run; DB init is skipped by Superset if already applied.
+# Standalone setup: build the image, pull Postgres and Redis, start the
+# stack of docker-compose.yml, and initialise the metadata database and a local
+# admin user. Safe to re-run: applied migrations are skipped and an existing
+# admin is kept. Not used inside the AISC stack.
+#
+#   scripts/bootstrap.sh              # .env (its secrets made if empty), then the stack
+#   scripts/bootstrap.sh --env-only   # .env only
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-ADMIN_USER="${ADMIN_USER:-admin}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
-ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
+# The secrets .env.example leaves empty on purpose (compose refuses to start without them), and the
+# local admin's password. An empty one is made here, once; one already set is kept. Never printed.
+SECRETS=(SUPERSET_SECRET_KEY SUPERSET_GUEST_TOKEN_SECRET SUPERSET_DB_PASSWORD DASHBOARD_REDIS_PASSWORD
+         ADMIN_PASSWORD)
+
+value_in() { awk -v n="$1" 'index($0, n "=") == 1 { print substr($0, length(n) + 2); exit }' .env; }
 
 if [[ ! -f .env ]]; then
-  echo "==> creating .env from .env.example (edit it, then re-run for prod)"
+  echo "==> creating .env from .env.example"
   cp .env.example .env
 fi
+for name in "${SECRETS[@]}"; do
+  if [[ -z "$(value_in "$name")" ]]; then
+    fresh=$(openssl rand -hex 32)
+    if grep -q "^$name=" .env; then
+      NAME=$name VALUE=$fresh awk 'index($0, ENVIRON["NAME"] "=") == 1 { print ENVIRON["NAME"] "=" ENVIRON["VALUE"]; next } { print }' .env > .env.tmp
+      mv .env.tmp .env
+    else
+      echo "$name=$fresh" >> .env
+    fi
+    echo "==> made $name in .env"
+  fi
+done
+chmod 600 .env
+[[ "${1:-}" == "--env-only" ]] && exit 0
+
+ADMIN_USER="${ADMIN_USER:-admin}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-$(value_in ADMIN_PASSWORD)}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 
 echo "==> downloading Superset + supporting images (this is the 'automated download')"
-docker compose build --pull        # pulls apache/superset:<tag> and layers the 3 deps
-docker compose pull superset-db superset-redis immudb
+docker compose build --pull        # pulls apache/superset:<tag> and adds two Python packages
+docker compose pull superset-db superset-redis
 
 echo "==> starting the stack"
 docker compose up -d
@@ -36,10 +61,12 @@ docker compose exec -T superset superset init
 
 cat <<EOF
 
-==> done. Dashboard: http://localhost:8188  (login: ${ADMIN_USER} / ${ADMIN_PASSWORD})
+==> done. Dashboard: http://localhost:8188  (login: ${ADMIN_USER}; the password is ADMIN_PASSWORD in .env)
 
 Next:
-  - register your results DB (Settings -> Database Connections) using AISC_RESULTS_DB_URI
+  - set AISC_MEMBERSHIP_DB_URI (dashboard_ro on the platform database) for sign-in memberships
+  - this stack sets no DASHBOARD_BRIDGE_TOKEN, so the bridge refuses every call and no project
+    dashboards are made here (inside AISC, the aisc repo's compose runs the dashboard)
   - to white-label: see branding/README.md
   - to upgrade Superset: bump the tag in Dockerfile, then re-run this script
 EOF

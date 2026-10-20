@@ -1,29 +1,32 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
 #
-# Stock Superset + a thin deps layer + bind-mounted config/extension/branding.
-# No nginx sidecar: Superset serves directly on :8188. No celery worker (all
-# async features are off). Rebranding needs NO rebuild -- change .env + the
-# mounted logo and restart.
+# Standalone stack, for development outside AISC: the dashboard image with the
+# config, extension and branding bind-mounted, plus its own Postgres (metadata)
+# and Redis. Superset serves directly on :8188. There is no Celery worker
+# because every async feature is off. Rebranding needs no rebuild: change .env
+# or the mounted logo and restart. Inside AISC the dashboard runs from the aisc
+# repo's docker-compose.development.yml instead.
 name: aisc-results-dashboard
 
 x-superset-env: &superset-env
-  SUPERSET_DB_URI: postgresql+psycopg2://superset:${SUPERSET_DB_PASSWORD:-superset}@superset-db:5432/superset
-  SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-aisc-dev-secret-change-me}
-  REDIS_HOST: superset-redis
-  REDIS_PORT: "6379"
-  IMMUDB_HOST: immudb
-  IMMUDB_PORT: "3322"
-  IMMUDB_USER: ${IMMUDB_USER:-immudb}
-  IMMUDB_PASSWORD: ${IMMUDB_PASSWORD:-immudb}
-  AISC_AUDIT_ENABLED: "true"
-  AISC_RESULTS_DB_URI: ${AISC_RESULTS_DB_URI:-}
-  # ---- branding (default = AISC; override for another tenant) ----
+  SUPERSET_DB_URI: postgresql+psycopg2://superset:${SUPERSET_DB_PASSWORD:?see .env.example (openssl rand -hex 32)}@superset-db:5432/superset
+  SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:?see .env.example (openssl rand -hex 32)}
+  SUPERSET_GUEST_TOKEN_SECRET: ${SUPERSET_GUEST_TOKEN_SECRET:?see .env.example (openssl rand -hex 32)}
+  # the cache's Redis, the dashboard's own and with a password (aisc_ext/cache.py)
+  DASHBOARD_REDIS_HOST: superset-redis
+  DASHBOARD_REDIS_PORT: "6379"
+  DASHBOARD_REDIS_PASSWORD: ${DASHBOARD_REDIS_PASSWORD:?see .env.example (openssl rand -hex 32)}
+  # memberships at sign-in: dashboard_ro on the platform database (a plain DSN, never a connection)
+  AISC_MEMBERSHIP_DB_URI: ${AISC_MEMBERSHIP_DB_URI:-}
+  # host:port of the project databases; the bridge builds one connection per project from it
+  AISC_PROJECT_DB_HOSTPORT: ${AISC_PROJECT_DB_HOSTPORT:-postgres:5432}
+  # ---- branding (blank means the AISC default) ----
   BRANDING_APP_NAME: ${BRANDING_APP_NAME:-}
   BRANDING_LOGO: ${BRANDING_LOGO:-}
   BRANDING_PRIMARY: ${BRANDING_PRIMARY:-}
   BRANDING_SECONDARY: ${BRANDING_SECONDARY:-}
-  # ---- interactive embedding: origins allowed to frame the dashboard ----
+  # ---- embedding: origins allowed to frame the dashboard ----
   EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-}
   # ---- Keycloak SSO (AISC_OAUTH=1 to enable) ----
   AISC_OAUTH: ${AISC_OAUTH:-}
@@ -37,7 +40,7 @@ services:
     environment:
       POSTGRES_DB: superset
       POSTGRES_USER: superset
-      POSTGRES_PASSWORD: ${SUPERSET_DB_PASSWORD:-superset}
+      POSTGRES_PASSWORD: ${SUPERSET_DB_PASSWORD:?see .env.example (openssl rand -hex 32)}
     volumes: [superset_db:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U superset"]
@@ -47,12 +50,14 @@ services:
 
   superset-redis:
     image: redis:7-alpine
-
-  immudb:
-    image: codenotary/immudb:latest
-    command: ["--auth"]
+    # Superset unpickles what it reads from its cache, so the cache takes a password (aisc_ext/cache.py);
+    # it goes through a config file, so it is not in the server's command line (as the root compose's
+    # dashboard-redis). A cache: nothing is kept on disk.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'printf "requirepass %s\nsave \"\"\nappendonly no\n" "$$DASHBOARD_REDIS_PASSWORD" > /tmp/redis.conf && exec redis-server /tmp/redis.conf'
     environment:
-      IMMUDB_ADMIN_PASSWORD: ${IMMUDB_PASSWORD:-immudb}
+      DASHBOARD_REDIS_PASSWORD: ${DASHBOARD_REDIS_PASSWORD:?see .env.example (openssl rand -hex 32)}
 
   superset:
     build: .
@@ -61,7 +66,7 @@ services:
     ports:
       - "8188:8088"
     volumes:
-      # the entire customization, mounted read-only -- no rebuild to change it
+      # the whole customisation, mounted read-only, so changing it needs no rebuild
       - ./superset_config.py:/app/pythonpath/superset_config.py:ro
       - ./aisc_ext:/app/pythonpath/aisc_ext:ro
       # served at /static/assets/branding/<tenant>/... ; APP_ICON points here
@@ -70,8 +75,6 @@ services:
       superset-db:
         condition: service_healthy
       superset-redis:
-        condition: service_started
-      immudb:
         condition: service_started
 
 volumes:

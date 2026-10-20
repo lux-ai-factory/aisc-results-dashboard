@@ -20,10 +20,10 @@ pinned image is a sealed release artifact; upgrading is one tag change.
 ## 2. Dependencies via a 4-line Dockerfile, not "image-less"
 
 **Decision:** A tiny `Dockerfile` does `FROM apache/superset:<tag>` plus
-`pip install immudb-py Authlib psycopg2-binary`. Nothing else. Config, extension,
+`pip install Authlib psycopg2-binary`. Nothing else. Config, extension,
 and branding are bind-mounted at runtime.
 
-**Why:** The three deps can't be bind-mounted. The alternative — installing them
+**Why:** The two deps can't be bind-mounted. The alternative — installing them
 at container start via `PIP_ADDITIONAL_REQUIREMENTS` — only works on the published
 image if you also override the start command, and it reinstalls on every boot
 (slow, network-dependent, can fail offline). A build-once layer that adds
@@ -85,3 +85,11 @@ upgrade," the user chose the latter. Branding therefore comes from the logo, app
 name, and theme accent colors; the bar itself is Superset's default white.
 
 **Do not re-add nav CSS injection** without revisiting this decision.
+
+## 8. No audit log of its own
+
+**Decision:** Superset's default event logger (its `logs` table) records actions; comments and reviews
+reach the platform's ledger through the outbox.
+
+**Why:** one access model for immudb in AISC, where only the platform's ledger and the engine's own account
+write to immudb and no long-running service holds immudb's superuser password.

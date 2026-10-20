@@ -28,7 +28,6 @@ built/redistributed image and must be retained.
 Python dependencies installed on top of the base image:
 
 - Authlib (BSD-3-Clause)
-- immudb-py (Apache-2.0)
 - psycopg2-binary (LGPL-3.0 with exceptions) — note the weak-copyleft license
   when redistributing built images.
 
