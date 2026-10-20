@@ -1,6 +1,8 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Native Superset model for review requests (metadata DB). Runtime-only."""
+"""SQLAlchemy model of a review request, stored in Superset's metadata database.
+
+Imported only inside Superset."""
 from sqlalchemy import Column, DateTime, Integer, String, Text, func
 from superset import db  # type: ignore
 
@@ -18,7 +20,7 @@ class AiscReviewRequest(Model):
     assignee_type = Column(String(16), nullable=False)        # user | category
     assignee_user_sub = Column(String(255), nullable=True, index=True)
     assignee_category = Column(String(64), nullable=True, index=True)
-    status = Column(String(16), default="open", index=True)   # open|done|dismissed
+    status = Column(String(16), default="open", index=True)   # open | done | dismissed
     created_at = Column(DateTime, server_default=func.now())
     resolved_at = Column(DateTime, nullable=True)
     resolved_by = Column(String(255), nullable=True)

@@ -1,7 +1,7 @@
 # Branding (white-label)
 
-The bar logo, app name and theme colors are **runtime config** — no image
-rebuild to change them. AISC is the built-in default tenant (`branding/aisc/`).
+The top-bar logo, app name and theme colours are runtime configuration: changing
+them needs no image rebuild. AISC is the default (`branding/aisc/`).
 
 ## Add a company
 
@@ -24,13 +24,11 @@ rebuild to change them. AISC is the built-in default tenant (`branding/aisc/`).
    BRANDING_SECONDARY=#ff6600
    ```
 
-   `BRANDING_PRIMARY` is enough — the dark/light shades are derived
-   automatically (`aisc_ext/branding.py`).
+   `BRANDING_PRIMARY` is enough: the darker and lighter shades are derived
+   from it (`aisc_ext/branding.py`).
 
-3. Apply:
-
-   ```
-   docker compose up -d
-   ```
+3. Apply: `docker compose up -d` (standalone), or restart the `dashboard`
+   container in the AISC stack, which passes the `BRANDING_*` variables from the
+   environment docker compose runs with.
 
 Leave the `BRANDING_*` vars blank to fall back to the default AISC identity.

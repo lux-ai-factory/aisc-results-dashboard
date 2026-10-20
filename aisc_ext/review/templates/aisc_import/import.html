@@ -1,0 +1,40 @@
+{% extends "aisc_review/_base.html" %}
+{% block title %}Import charts{% endblock %}
+{% block head %}
+<style>
+  main { max-width: 720px; width: 100%; margin: 0 auto; padding: 28px 16px; }
+  main h2 { font-size: 20px; margin: 0 0 4px; }
+  main p.lead { color: var(--muted); margin: 0 0 20px; }
+  form.card { display: grid; gap: 16px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 20px; }
+  label { display: grid; gap: 6px; font-weight: 600; }
+  select, input[type=file] { font: inherit; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+  .error { color: #b42318; background: #fef3f2; border: 1px solid #fecdca; border-radius: 6px; padding: 10px 12px; }
+  .empty { background: var(--card); border: 1px dashed var(--line); border-radius: 8px; padding: 24px; color: var(--muted); }
+</style>
+{% endblock %}
+{% block crumbs %}<h1>Import charts</h1>{% endblock %}
+{% block actions %}<a class="btn" href="/dashboard/list/?viewMode=card">Your tiles</a>{% endblock %}
+{% block body %}
+<main>
+  <h2>Add charts to a plugin's tile</h2>
+  <p class="lead">From a Superset chart export (.zip). The charts read this project's results, and go under
+    "Your charts": they are yours, and AISC never changes them.</p>
+  {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+  {% if tiles %}
+  <form class="card" method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="dashboard">Tile
+      <select id="dashboard" name="dashboard" required>
+        {% for t in tiles %}<option value="{{ t.id }}">{{ t.title }}</option>{% endfor %}
+      </select>
+    </label>
+    <label for="file">Chart export
+      <input id="file" name="file" type="file" accept=".zip" required>
+    </label>
+    <div><button class="btn" type="submit">Import</button></div>
+  </form>
+  {% else %}
+  <p class="empty">You own no plugin tile. Owners and editors of a project own its tiles from their next sign-in.</p>
+  {% endif %}
+</main>
+{% endblock %}

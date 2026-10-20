@@ -1,66 +1,97 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Superset configuration overlay.
+"""Superset configuration for the AISC results dashboard.
 
-This file (plus the mounted ``aisc_ext`` package) is the ENTIRE customization:
-it is layered onto the stock ``apache/superset`` image via PYTHONPATH. Nothing in
-Superset's own source is touched, so upgrades are a one-line image-tag bump.
+This file and the ``aisc_ext`` package are the whole customisation. Both are
+mounted into the stock ``apache/superset`` image and found through PYTHONPATH;
+Superset's own source is not changed, so an upgrade is an image tag bump.
 
-Every customization rides an official Superset config seam:
-  - branding          -> APP_NAME / APP_ICON / THEME_OVERRIDES  (env-driven)
-  - audit ledger      -> EVENT_LOGGER
+Each customisation uses a documented Superset config hook:
+  - branding          -> APP_NAME, APP_ICON, THEME_OVERRIDES (from env vars)
+  - action log        -> Superset's own event logger (DBEventLogger, the logs table)
   - Keycloak SSO      -> CUSTOM_SECURITY_MANAGER
-  - comments/reviews  -> FLASK_APP_MUTATOR (API + native FAB views)
-  - interactive embed -> FEATURE_FLAGS + Talisman frame-ancestors
+  - comments, reviews -> FLASK_APP_MUTATOR (REST APIs and Flask-AppBuilder views)
+  - embedding         -> FEATURE_FLAGS and the Talisman frame-ancestors policy
 """
+import logging
 import os
 
 from aisc_ext import branding
 
-# ---- core ----
-SECRET_KEY = os.environ.get("SUPERSET_SECRET_KEY", "aisc-dev-secret-change-me")
+# No default on purpose. This key signs every session cookie, so a value shipped
+# in the repository would let anyone who read it forge a session as any user,
+# Admin included. Without it the dashboard refuses to start.
+try:
+    SECRET_KEY = os.environ["SUPERSET_SECRET_KEY"]
+except KeyError:  # pragma: no cover - the message is the point
+    raise RuntimeError(
+        "SUPERSET_SECRET_KEY is not set. Generate one with `openssl rand -hex 32` "
+        "and put it in .env; see .env.example."
+    ) from None
+# Embedding is on (EMBEDDED_SUPERSET): guest tokens are signed with this install's own secret, never
+# Superset's published default. No default either; without it the dashboard refuses to start.
+try:
+    GUEST_TOKEN_JWT_SECRET = os.environ["SUPERSET_GUEST_TOKEN_SECRET"]
+except KeyError:  # pragma: no cover - the message is the point
+    raise RuntimeError(
+        "SUPERSET_GUEST_TOKEN_SECRET is not set. Generate one with `openssl rand -hex 32` "
+        "and put it in .env; see .env.example."
+    ) from None
 SQLALCHEMY_DATABASE_URI = os.environ["SUPERSET_DB_URI"]
 
-# ---- redis cache ----
-REDIS_HOST = os.environ.get("REDIS_HOST", "superset-redis")
-REDIS_PORT = int(os.environ.get("REDIS_PORT", "6379"))
-CACHE_CONFIG = {"CACHE_TYPE": "RedisCache", "CACHE_REDIS_HOST": REDIS_HOST,
-                "CACHE_REDIS_PORT": REDIS_PORT, "CACHE_DEFAULT_TIMEOUT": 300}
+# The cache is a Redis of the dashboard's own, with a password (DASHBOARD_REDIS_*), never the stack's
+# shared one: Superset unpickles what it reads there (aisc_ext/cache.py). Without a password the
+# dashboard refuses to start.
+from aisc_ext.cache import cache_config  # noqa: E402
 
-# ---- branding (Layer A) — resolved from env, AISC is the default tenant ----
-# A company rebrands by mounting its logo and setting BRANDING_* env vars; no
-# image rebuild. See aisc_ext/branding.py and .env.example.
+CACHE_CONFIG = cache_config(os.environ)
+
+# Branding comes from BRANDING_* env vars, with AISC as the default. A company
+# rebrands by mounting its logo and setting those variables, without rebuilding
+# the image. See aisc_ext/branding.py and .env.example.
 APP_NAME = branding.app_name()
 APP_ICON = branding.app_icon()
-LOGO_TARGET_PATH = "/"
+# The dashboard is step 5 of AISC, so its logo leads back to the AISC launcher
+# rather than to Superset's home. Superset does not know which project the user
+# came from, so this is the project list.
+LOGO_TARGET_PATH = os.environ.get("LAUNCHER_URL", "http://localhost:8100/")
 FAVICONS = branding.favicons()
 THEME_OVERRIDES = branding.theme_overrides()
 EXTRA_CATEGORICAL_COLOR_SCHEMES = branding.categorical_schemes()
 
-# ---- feature flags: lean "curated assessment dashboard" posture ----
+# Only the features an assessment dashboard needs.
 FEATURE_FLAGS = {
-    "DASHBOARD_CROSS_FILTERS": True,   # click a bar -> filter others (useful)
-    "DRILL_BY": True,                  # drill into a dimension (useful)
-    "DRILL_TO_DETAIL": True,           # see underlying rows (useful)
-    "ALERT_REPORTS": False,            # no scheduled email reports (needs SMTP+beat)
-    "THUMBNAILS": False,               # no async screenshot workers
-    "GLOBAL_ASYNC_QUERIES": False,     # small data -> synchronous; no worker needed
-    "TAGGING_SYSTEM": False,           # BI clutter
-    "ESTIMATE_QUERY_COST": False,      # analyst feature, unused
-    "SSH_TUNNELING": False,            # single local DB
-    "DYNAMIC_PLUGINS": False,          # curated plugins only
-    "ENABLE_JAVASCRIPT_CONTROLS": False,  # XSS surface, keep off
-    "ENABLE_FACTORY_RESET_COMMAND": False,  # destructive, keep off
-    # ---- interactive embedding (Layer C): keep charts LIVE in a host iframe ----
-    # Legend select/deselect, cross-filters and drill survive because Superset
-    # itself renders the chart in the iframe. Native flags, no DOM patching.
+    "DASHBOARD_CROSS_FILTERS": True,   # click a bar to filter the other charts
+    "DRILL_BY": True,
+    "DRILL_TO_DETAIL": True,           # show the rows behind a chart
+    "ALERT_REPORTS": False,            # would need SMTP and a Celery beat worker
+    "THUMBNAILS": False,               # would need screenshot workers
+    "GLOBAL_ASYNC_QUERIES": False,     # the data is small; synchronous queries suffice
+    "TAGGING_SYSTEM": False,
+    "ESTIMATE_QUERY_COST": False,
+    "SSH_TUNNELING": False,            # the databases are on the same network
+    "DYNAMIC_PLUGINS": False,
+    "ENABLE_JAVASCRIPT_CONTROLS": False,  # would let chart authors run JavaScript (XSS)
+    "ENABLE_FACTORY_RESET_COMMAND": False,  # destructive
+    # Embedding: a host page can show a chart in an iframe and it stays
+    # interactive (legend, cross-filters, drill), because Superset itself
+    # renders it there.
     "EMBEDDED_SUPERSET": True,
+    # Each project has one dashboard, visible only to that project's role, so a
+    # member sees their project's dashboard and no other.
+    "DASHBOARD_RBAC": True,
     "EMBEDDABLE_CHARTS": True,
 }
 
-PUBLIC_ROLE_LIKE = None               # no anonymous access
+PUBLIC_ROLE_LIKE = None  # no anonymous access
 
-# Chart curation: drop geospatial + hard-to-read niche types (see README).
+# /api/v1/<resource>/related/roles lists a person's own roles only (an Admin's: all). By default it listed
+# every role, so every project's pid (AiscProject_<hex>) was readable by anyone signed in.
+from aisc_ext.security import own_roles_only  # noqa: E402
+
+EXTRA_RELATED_QUERY_FILTERS = {"role": own_roles_only}
+
+# Hide map charts and niche chart types that are hard to read (see README).
 VIZ_TYPE_DENYLIST = [
     "world_map", "country_map", "mapbox",
     "deck_arc", "deck_grid", "deck_hex", "deck_multi", "deck_path",
@@ -73,18 +104,15 @@ VIZ_TYPE_DENYLIST = [
 
 PREVENT_UNSAFE_DB_CONNECTIONS = True
 
-# ---- interactive embedding: let host pages frame us (Layer C, cont.) ----
-# Auth model = shared Keycloak SSO session: the iframe rides the viewer's
-# existing AISC login. Set EMBED_ALLOWED_ORIGINS to the host origin(s).
+# Let the pages in EMBED_ALLOWED_ORIGINS (comma separated) frame the dashboard.
+# The iframe uses the viewer's existing Keycloak session. The session cookie is
+# then sent cross-site, which needs SameSite=None and Secure, so embedding only
+# works over HTTPS. A browser that blocks third-party cookies outright needs
+# Superset's guest tokens (/api/v1/security/guest_token/) instead.
 #
-# Cross-origin note: the session cookie must be sent in a third-party context,
-# so we set SameSite=None; Secure -> this REQUIRES serving over HTTPS. If the
-# browser still blocks the cookie (strict third-party-cookie policies), fall
-# back to guest tokens (native /api/v1/security/guest_token/).
-#
-# VERIFY: confirm the resulting CSP against the running image before relying on
-# it -- we extend Superset's shipped Talisman default rather than replace it, so
-# no directive is dropped, but frame embedding is worth an end-to-end check.
+# Superset's own Talisman policy is copied and only frame-ancestors is set, so
+# no other CSP directive is lost. Check the resulting header against the running
+# image before relying on it.
 _embed_origins = [o.strip() for o in os.environ.get("EMBED_ALLOWED_ORIGINS", "").split(",") if o.strip()]
 if _embed_origins:
     from copy import deepcopy
@@ -101,13 +129,12 @@ if _embed_origins:
     _csp = TALISMAN_CONFIG.setdefault("content_security_policy", {}) or {}
     _csp["frame-ancestors"] = ["'self'", *_embed_origins]
     TALISMAN_CONFIG["content_security_policy"] = _csp
+    # Superset runs talisman.init_app(app, **TALISMAN_CONFIG), and flask-talisman sets the session cookie's
+    # SameSite and Secure from these two (default Lax), over SESSION_COOKIE_* above.
+    TALISMAN_CONFIG["session_cookie_samesite"] = "None"
+    TALISMAN_CONFIG["session_cookie_secure"] = True
 
-# ---- audit -> immudb ----
-from aisc_ext.event_logger import ImmudbEventLogger  # noqa: E402
-
-EVENT_LOGGER = ImmudbEventLogger()
-
-# ---- Keycloak OIDC (enabled when AISC_OAUTH=1) ----
+# Keycloak sign-in (OIDC), on when AISC_OAUTH=1.
 if os.environ.get("AISC_OAUTH") == "1":
     from flask_appbuilder.security.manager import AUTH_OAUTH  # noqa: E402
     from aisc_ext.sso import KeycloakSecurityManager  # noqa: E402
@@ -115,7 +142,14 @@ if os.environ.get("AISC_OAUTH") == "1":
     AUTH_TYPE = AUTH_OAUTH
     CUSTOM_SECURITY_MANAGER = KeycloakSecurityManager
     AUTH_USER_REGISTRATION = True
-    AUTH_USER_REGISTRATION_ROLE = "Gamma"
+    # New users get the read-only viewer role, not Gamma: Gamma can edit charts
+    # and dashboards that everyone else reads.
+    from aisc_ext.security import VIEWER_ROLE  # noqa: E402
+
+    AUTH_USER_REGISTRATION_ROLE = VIEWER_ROLE
+    # Recompute roles at every sign-in, so a role changed in Keycloak (or a
+    # project membership) takes effect at the next login.
+    AUTH_ROLES_SYNC_AT_LOGIN = True
     OIDC_ISSUER = (os.environ.get("OIDC_ISSUER")
                    or "http://keycloak.localhost:8080/realms/dashboard")
     OAUTH_PROVIDERS = [{
@@ -124,7 +158,8 @@ if os.environ.get("AISC_OAUTH") == "1":
         "token_key": "access_token",
         "remote_app": {
             "client_id": os.environ.get("OIDC_CLIENT_ID") or "superset",
-            "client_secret": os.environ.get("OIDC_CLIENT_SECRET") or "superset-secret",
+            # no fallback: a published secret is no secret (the login is off unless AISC_OAUTH=1)
+            "client_secret": os.environ["OIDC_CLIENT_SECRET"],
             "server_metadata_url": f"{OIDC_ISSUER}/.well-known/openid-configuration",
             "api_base_url": f"{OIDC_ISSUER}/protocol/",
             "client_kwargs": {"scope": "openid email profile"},
@@ -132,50 +167,166 @@ if os.environ.get("AISC_OAUTH") == "1":
     }]
 
 
-# ---- register native comments/reviews: API + menu-accessible FAB views ----
-# The old in-page widget (DOM-injected via an nginx sidecar) is GONE -- it was
-# the one upgrade-fragile piece. Superset's own Flask-AppBuilder renders these
-# views, so there is zero coupling to Superset's React/DOM.
+# Comments and review requests are Flask-AppBuilder views and REST APIs, so they
+# do not depend on Superset's React frontend.
+
+#: Permissions given, per view, to Admin, Alpha, Gamma and the viewer role, so
+#: editors and viewers alike can use the Review page and its APIs.
+_EXTENSION_GRANTS = {
+    "CommentApi": ("can_list", "can_threads", "can_post", "can_delete"),
+    "AiscReviewView": ("can_list", "can_show"),
+    # the page is open to every role; importing takes owning the tile
+    "AiscChartImportView": ("can_form", "can_upload"),
+    "Import charts": ("menu_access",),
+    "Review dashboards": ("menu_access",),
+    # the top menu's "← Back", one level up to the project's AI Assessment Sandbox (aisc_ext/back.py)
+    "Back": ("menu_access",),
+    "ReviewRequestApi": ("can_list", "can_post", "can_patch", "can_assignees"),
+}
+
+
 def FLASK_APP_MUTATOR(app):  # noqa: N802 (Superset hook name)
+    # There is only one identity provider, so an anonymous GET of /login/ goes
+    # straight to Keycloak instead of showing a page with a single button. With
+    # a Keycloak session the user is signed in without seeing anything.
+    if os.environ.get("AISC_OAUTH") == "1":
+        from flask import redirect, request, url_for  # noqa: E402
+        from aisc_ext.sso import skip_provider_picker  # noqa: E402
+
+        @app.before_request
+        def _skip_provider_picker():  # pragma: no cover - exercised in the app
+            try:
+                from flask_login import current_user
+                authenticated = bool(getattr(current_user, "is_authenticated", False))
+            except Exception:
+                authenticated = False
+            provider = skip_provider_picker(request.path, request.method, authenticated)
+            if provider is None:
+                return None
+            # url_for encodes next, so a next with its own query arrives whole
+            nxt = request.args.get("next")
+            return redirect(url_for("AuthOAuthView.login", provider=provider, next=nxt) if nxt
+                            else url_for("AuthOAuthView.login", provider=provider))
+
+    # The dashboard's "← Back" needs the project the platform's link names (aisc_ext/back.py).
+    from flask import request, session  # noqa: E402
+    from aisc_ext.back import remember  # noqa: E402
+
+    @app.before_request
+    def _remember_the_project():  # pragma: no cover - exercised in the app
+        remember(request.args, session)
+
     with app.app_context():
-        from aisc_ext.comments.api import CommentApi
-        from aisc_ext.comments.model import AiscComment
-        from aisc_ext.comments.views import AiscCommentView
-        from aisc_ext.reviews.api import ReviewRequestApi
-        from aisc_ext.reviews.model import AiscReviewRequest
-        from aisc_ext.reviews.service import STAKEHOLDER_GROUPS
-        from aisc_ext.reviews.views import AiscReviewRequestView
-        from superset import db
-        sm = app.appbuilder.sm
+        # No Superset connection to the shared `platform` database is made
+        # here. Each project's datasets use that project's own connection, which
+        # the platform creates through the bridge API (aisc_ext/projects.py).
+        # Memberships are read at sign-in over a plain DSN (aisc_ext/sso.py).
+        # Query connections use Superset's default engines, which keep no
+        # persistent pool.
+        _install_extension(app)
+
+
+def _install_extension(app):
+    """Register the extension's APIs, views, tables, permissions and roles.
+
+    The modules are imported outside the try on purpose: a module that fails to
+    import is a broken deployment and should stop startup, while a failure while
+    writing to Superset's metadata database should only be logged."""
+    from aisc_ext.comments.api import CommentApi
+    from aisc_ext.project_bridge_api import ProjectBridgeApi
+    from aisc_ext.comments.model import AiscComment
+    from aisc_ext.comments.views import AiscCommentView
+    from aisc_ext.reviews.api import ReviewRequestApi
+    from aisc_ext.reviews.model import AiscReviewRequest
+    from aisc_ext.reviews.service import STAKEHOLDER_GROUPS
+    from aisc_ext.reviews.views import AiscReviewRequestView
+    from aisc_ext.review.views import AiscReviewView
+    from aisc_ext.import_view import AiscChartImportView
+    from superset import db
+    appbuilder = app.appbuilder
+    sm = appbuilder.sm
+    try:
+        # REST APIs for the Review page, the embedding host and the platform's
+        # bridge (which creates and removes a project's dashboard).
+        for api in (CommentApi, ProjectBridgeApi, ReviewRequestApi):
+            appbuilder.add_api(api)
+        # The Review page comes first in the menu: it is where people read and
+        # write comments.
+        # "← Back" in the top menu: one level up, to the project's AI Assessment Sandbox.
+        from aisc_ext.back_view import AiscBackView
+        appbuilder.add_view_no_menu(AiscBackView)
+        appbuilder.add_link("Back", label="← Back", href="/aisc/back/", icon="fa-arrow-left")
+        for view, name, icon in (
+            (AiscReviewView, "Review dashboards", "fa-comment-dots"),
+            (AiscCommentView, "Comments", "fa-comments"),
+            (AiscReviewRequestView, "Review Requests", "fa-clipboard-check"),
+            (AiscChartImportView, "Import charts", "fa-file-import"),
+        ):
+            appbuilder.add_view(view, name, category="Assessment", icon=icon)
+        for model in (AiscComment, AiscReviewRequest):
+            model.__table__.create(bind=db.engine, checkfirst=True)
+        # A deleted comment is hidden, not removed, via aisc_comment.deleted_at.
+        # Tables created before that column existed get it here. The ledger
+        # outbox table lives in this same metadata database.
+        from sqlalchemy import text
+
+        from aisc_ext import ledger
+
+        # Idempotent on Postgres. Two workers starting at once may still race;
+        # the first one's work stays in place, so a failure is logged and
+        # startup continues.
         try:
-            # --- REST APIs (for the embedding host / programmatic use) ---
-            app.appbuilder.add_api(CommentApi)
-            app.appbuilder.add_api(ReviewRequestApi)
-            # --- native menu-accessible CRUD surface (replaces the widget) ---
-            app.appbuilder.add_view(
-                AiscCommentView, "Comments", category="Assessment", icon="fa-comments")
-            app.appbuilder.add_view(
-                AiscReviewRequestView, "Review Requests", category="Assessment",
-                icon="fa-clipboard-check")
-            AiscComment.__table__.create(bind=db.engine, checkfirst=True)
-            AiscReviewRequest.__table__.create(bind=db.engine, checkfirst=True)
+            with db.engine.begin() as conn:
+                conn.execute(text("ALTER TABLE aisc_comment ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP"))
+            ledger.OUTBOX.metadata.create_all(db.engine)
+        except Exception:                                               # noqa: BLE001
+            logging.getLogger(__name__).exception("ledger: the comment column or the outbox was not made here")
+        # Review requests posted with a dashboard's slug were stored under it by older code; they
+        # move to the dashboard's id, as comments are keyed. Idempotent.
+        try:
+            from aisc_ext.reviews.service import rekey_by_id
 
-            # --- grant API perms so editors+viewers can use them ---
-            grants = {
-                "CommentApi": ("can_list", "can_post", "can_delete"),
-                "ReviewRequestApi": ("can_list", "can_post", "can_patch", "can_assignees"),
-            }
-            for view, perms in grants.items():
-                for perm in perms:
-                    pvm = sm.add_permission_view_menu(perm, view)
-                    for role_name in ("Admin", "Alpha", "Gamma"):
-                        role = sm.find_role(role_name)
-                        if role and pvm and pvm not in role.permissions:
-                            role.permissions.append(pvm)
+            with db.engine.begin() as conn:
+                rekey_by_id(conn)
+        except Exception:                                               # noqa: BLE001
+            logging.getLogger(__name__).exception("reviews: requests under a slug were not moved to the id")
 
-            # --- stakeholder-group roles for review-request assignment ---
-            for g in STAKEHOLDER_GROUPS:
-                sm.add_role(g)
-            sm.get_session.commit()
-        except Exception as exc:  # don't block startup on this
-            app.logger.warning("AISC extension init skipped: %s", exc)
+        # The viewer role is Gamma without write permissions. It is created
+        # before the grants below so that it can receive them.
+        from aisc_ext.security import VIEWER_ROLE
+        from aisc_ext.viewer_role import ensure_viewer_role
+
+        ensure_viewer_role(sm)
+
+        # The account the bridge's imports run as: Superset's import runs as a
+        # user and needs the right to create charts and dashboards, hence Admin. Inactive and without a
+        # password, so nobody can sign in with it; only the bridge's token-checked routes act as it.
+        from aisc_ext.projects import BRIDGE_USER
+
+        bridge = sm.find_user(username=BRIDGE_USER)
+        if bridge is None:
+            sm.add_user(BRIDGE_USER, "AISC", "bridge", f"{BRIDGE_USER}@aisc.invalid", [sm.find_role("Admin")])
+            bridge = sm.find_user(username=BRIDGE_USER)
+        if bridge is not None:
+            bridge.roles = [sm.find_role("Admin")]
+            bridge.active = False
+            bridge.password = None
+        _grant(sm, _EXTENSION_GRANTS, ("Admin", "Alpha", "Gamma", VIEWER_ROLE))
+
+        # One role per stakeholder group, to assign review requests to.
+        for group in STAKEHOLDER_GROUPS:
+            sm.add_role(group)
+        sm.get_session.commit()
+    except Exception as exc:  # logged, startup continues
+        app.logger.warning("AISC extension init skipped: %s", exc)
+
+
+def _grant(sm, grants, role_names):
+    """Give each named role that exists every (permission, view) in grants."""
+    for view, perms in grants.items():
+        for perm in perms:
+            pvm = sm.add_permission_view_menu(perm, view)
+            for role_name in role_names:
+                role = sm.find_role(role_name)
+                if role and pvm and pvm not in role.permissions:
+                    role.permissions.append(pvm)

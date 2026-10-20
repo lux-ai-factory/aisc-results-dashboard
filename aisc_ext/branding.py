@@ -1,29 +1,30 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""Tenant branding resolved from environment, with AISC as the built-in default.
+"""Branding (name, logo, colours) from environment variables, AISC by default.
 
-A company white-labels the dashboard by mounting its logo and setting a few env
-vars (see .env.example) -- no image rebuild, no Superset source touched. This
-module is deliberately free of any Superset import so it stays unit-testable and
-safe to import from superset_config.py at startup.
+A company rebrands the dashboard by mounting its logo and setting the BRANDING_*
+variables (see .env.example), without rebuilding the image. The module imports
+nothing from Superset, so it can be unit-tested and imported from
+superset_config.py at startup.
 """
 from __future__ import annotations
 
 import os
 from typing import Mapping
 
-# ---- AISC defaults (the default tenant) ----
+# AISC defaults
 DEFAULT_APP_NAME = "AI Assessment Sandbox"
 DEFAULT_LOGO = "/static/assets/branding/aisc/laif_logo.png"
 DEFAULT_PRIMARY = "#001075"
 DEFAULT_SECONDARY = "#D7193B"
-# accent palette used to round out the categorical color scheme (slots 3..n)
+# accent colours that fill the categorical colour scheme after the brand colours
 _ACCENTS = ["#1976d2", "#2dd4bf", "#fbbf24", "#7c3aed", "#0ea5e9", "#10b981"]
 
 
 def _get(env: Mapping[str, str] | None, name: str, default: str) -> str:
-    """Read env, treating unset/blank (compose forwards "" for unset .env vars)
-    as 'use the default'."""
+    """Read an env var; unset or blank means the default.
+
+    Blank counts as unset because compose passes "" for a variable missing from .env."""
     val = (env if env is not None else os.environ).get(name)
     return val.strip() if (val and val.strip()) else default
 
@@ -60,8 +61,8 @@ def _secondary(env: Mapping[str, str] | None) -> str:
 
 
 def theme_overrides(env: Mapping[str, str] | None = None) -> dict:
-    """Superset THEME_OVERRIDES: primary gets derived dark1/light1 shades so a
-    company only needs to supply a single base hex."""
+    """Superset THEME_OVERRIDES. The dark1 and light1 shades are derived from the
+    primary colour, so a company supplies only one hex value."""
     primary = _primary(env)
     return {
         "colors": {
@@ -76,7 +77,7 @@ def theme_overrides(env: Mapping[str, str] | None = None) -> dict:
 
 
 def categorical_schemes(env: Mapping[str, str] | None = None) -> list[dict]:
-    """One default categorical scheme led by the tenant's brand colors."""
+    """One default categorical colour scheme that starts with the brand colours."""
     return [{
         "id": "brand",
         "label": app_name(env),

@@ -1,0 +1,334 @@
+# Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
+# SPDX-License-Identifier: Apache-2.0
+"""Ledger events for dashboard comments and review requests.
+
+A project's dashboard has the slug ``aisc-<pid hex>`` (aisc_ext.projects), so the event of a comment or a
+review finds its project's ledger from the dashboard it is on. The gateway's witness reads the same slug
+from the request (in the path, or in ``dashboard_id=``), which is why the Review page names the dashboard
+by its slug in every call that writes.
+
+Superset's metadata database is not a project database and has no ``ledger.emit``, so the extension keeps
+its own outbox table there (``aisc_ledger_outbox``). ``emit`` writes the event on the connection of the
+change, in its transaction, so the two commit or roll back together. ``deliver`` posts the queued events
+to the platform's internal ledger route with the dashboard's token, in order, once each. An event the
+platform refuses is kept with its status and not sent again (a deleted project's event too: the platform
+answers 404 "no project"); when the platform fails on a project, that project's events stay queued for the
+next pass and the other projects' go on.
+
+An event never names who acted: the witnessed request it cites does. A review's assignee is given as its
+kind (``user``) or its group (``category:legal``), never as a person. Nothing is queued while LEDGER_MODE
+is off (the default). The module imports nothing from Superset, so it is unit-tested on SQLite.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import threading
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import JSON, Column, DateTime, Integer, MetaData, String, Table, select, update
+
+_log = logging.getLogger(__name__)
+#: a project's dashboard: aisc-<pid hex>, or a plugin's, aisc-<pid hex>-<plugin> (charts.plugin_slug)
+_SLUG = re.compile(r"^aisc-([0-9a-f]{32})(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$")
+
+OUTBOX = Table(
+    "aisc_ledger_outbox", MetaData(),
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("project_pid", String(36), nullable=False),
+    Column("event", JSON, nullable=False),
+    Column("queued_at", DateTime(timezone=True), nullable=False),
+    Column("delivered_at", DateTime(timezone=True), nullable=True),
+    Column("refused", Integer, nullable=True),            # the HTTP status of the platform's refusal
+)
+
+
+def on() -> bool:
+    return os.environ.get("LEDGER_MODE", "off").strip().lower() in ("record", "enforce")
+
+
+def project_of(slug) -> str | None:
+    """The project a dashboard slug names, ``aisc-<pid hex>[-<plugin>]``, or None."""
+    m = _SLUG.match(str(slug or ""))
+    if not m:
+        return None
+    return str(uuid.UUID(m.group(1)))
+
+
+def project_for(dashboard, user) -> str | None:
+    """The project whose ledger a write on `dashboard` by `user` goes to, or None (no event is queued).
+
+    The slug alone is no binding: any owner of a dashboard may set it, so an editor of one project could name
+    another's in it and write into that project's ledger. The slug's project
+    counts only when the dashboard carries that project's role (the bridge sets it; DASHBOARD_RBAC shows it to
+    the project's members) and the person writing is in the project (its role, from this sign-in's
+    memberships) or an Admin."""
+    from aisc_ext.projects import project_role_name
+
+    pid = project_of(getattr(dashboard, "slug", None))
+    if pid is None:
+        return None
+    role = project_role_name(pid)
+    if role not in {r.name for r in getattr(dashboard, "roles", None) or []}:
+        return None
+    mine = {r.name for r in getattr(user, "roles", None) or []}
+    return pid if role in mine or "Admin" in mine else None
+
+
+def hint_problem(hint, slug) -> str | None:
+    """Check the request's witness hint against the dashboard actually written to.
+
+    The hint (`?dashboard=<slug>`) names the project to the gateway's witness. Returns a message when the
+    hint names another dashboard, so the request is refused before anything is written; None otherwise.
+    A missing hint is allowed: the event then cites a request filed in the platform log, and the relay
+    records that."""
+    if hint is None:
+        return None
+    if hint != slug:                       # a dashboard of no project too: emit queues nothing for it
+        return "the dashboard named in the request is not the one written to"
+    return None
+
+
+#: Where the gateway's middleware (the aisc repo's dashboard-gateway/gateway_identity.py) puts the claims of a
+#: gateway token that verified. Set only by that middleware, never from a header.
+GATEWAY_CLAIMS_KEY = "aisc.gateway_claims"
+
+
+def request_id(headers, environ=None) -> str | None:
+    """The id of the request the gateway witnessed (X-AISC-Request-Id), or None unless it is a UUID.
+
+    Kept only on a request that came through the gateway: one whose gateway token verified, so the
+    middleware left its claims in the WSGI environ. A caller reaching the dashboard directly on the backend
+    network, with no token or one of its own, could otherwise make an event cite any request it names (the
+    control-objectives service does the same)."""
+    if not (environ or {}).get(GATEWAY_CLAIMS_KEY):
+        return None
+    presented = headers.get("X-AISC-Request-Id") if headers is not None else None
+    try:
+        return str(uuid.UUID(presented)) if presented else None
+    except (ValueError, TypeError, AttributeError):
+        return None
+
+
+#: The actions this module builds fields for; `event` refuses any other.
+ACTIONS = ("dashboard.comment.created", "dashboard.comment.deleted", "dashboard.review.requested",
+           "dashboard.review.resolved")
+
+
+def _fields(item_type, item_id, request, **fields) -> dict:
+    out = {"request_id": request, "item_type": item_type, "item_id": item_id, "details": fields.pop("details", {})}
+    out.update({k: v for k, v in fields.items() if v is not None})
+    return out
+
+
+def event(action: str, fields: dict) -> dict:
+    """The event body the platform's internal route takes: a new event id, the action, the fields."""
+    if action not in ACTIONS:
+        raise ValueError(f"not a dashboard action: {action!r}")
+    return {"event_id": str(uuid.uuid4()), "action": action, **fields}
+
+
+def _said(row: dict) -> dict:
+    return {"body": row["body"], "chart": row.get("chart_id"), "parent": row.get("parent_id")}
+
+
+def comment_created(row: dict, *, slug: str, request: str | None) -> dict:
+    said = _said(row)
+    return _fields("comment", str(row["id"]), request,
+                  details={"dashboard": slug, "chart": row.get("chart_id")}, content=said, after=said)
+
+
+def comment_deleted(row: dict, *, slug: str, request: str | None) -> dict:
+    said = _said(row)
+    return _fields("comment", str(row["id"]), request,
+                  details={"dashboard": slug}, content=said, before=said)
+
+
+def _assignee(row: dict) -> str:
+    if row.get("assignee_type") == "category":
+        return f"category:{row.get('assignee_category')}"
+    return "user"
+
+
+def _review_state(row: dict) -> dict:
+    return {"message": row.get("message"), "chart": row.get("chart_id"), "assignee": _assignee(row),
+            "status": row.get("status") or "open"}
+
+
+def review_requested(row: dict, *, slug: str, request: str | None) -> dict:
+    state = _review_state({**row, "status": row.get("status") or "open"})
+    return _fields("review_request", str(row["id"]), request,
+                  details={"assignee": _assignee(row)}, content=state, after=state)
+
+
+def review_resolved(row: dict, *, status_before: str, slug: str, request: str | None) -> dict:
+    after = _review_state(row)
+    return _fields("review_request", str(row["id"]), request,
+                  details={"status_before": status_before, "status_after": row.get("status")},
+                  before={**after, "status": status_before}, after=after)
+
+
+def emit(conn, project_pid: str | None, action: str, fields: dict) -> int | None:
+    """Queue the event on `conn`, inside the change's own transaction, and return the outbox row id.
+
+    Returns None while the ledger is off, or for a dashboard that belongs to no project (an example
+    dashboard, say): there is no project ledger to write to."""
+    if not on() or project_pid is None:
+        return None
+    result = conn.execute(OUTBOX.insert().values(project_pid=project_pid, event=event(action, fields),
+                                                 queued_at=datetime.now(timezone.utc)))
+    return result.inserted_primary_key[0]
+
+
+#: The platform's statuses that refuse the event itself: the event is kept with the status and never sent
+#: again. 404 is the platform's "no project" (a project deleted after the event was queued): `http_sender`
+#: returns it only when the platform says so, and None for any other 404 (a wrong address). Any other
+#: failure (a wrong token, a wrong address, the platform down) is for the operator to fix, so the event
+#: waits for the next pass.
+REFUSALS = (404, 409, 413, 422)
+_PASS = threading.Lock()
+
+
+def deliver(engine, send, limit: int = 100) -> tuple[int, int]:
+    """Post the queued events, oldest first, and return (sent, not sent).
+
+    `send(pid, event)` returns the platform's HTTP status, or None when the platform cannot be asked. A 2xx
+    marks the event delivered. A status in REFUSALS keeps the event with that status, never sent again.
+    Any other status keeps the event queued and holds back that project's later events, so its order
+    holds, while other projects' events go on. None stops the pass:
+    no project can be sent to. Only one pass runs at a
+    time in this process, so two request threads never send the same rows, or one comment's events out of
+    order."""
+    if not _PASS.acquire(blocking=False):
+        return 0, 0
+    try:
+        return _deliver_locked(engine, send, limit)
+    finally:
+        _PASS.release()
+
+
+#: The advisory lock a delivery pass holds on Postgres: one pass at a time across Superset's workers.
+_PASS_LOCK_KEY = 0x41495343_4C444752  # "AISCLDGR"
+
+
+def _deliver_locked(engine, send, limit: int) -> tuple[int, int]:
+    """One pass, across processes: on Postgres it holds an advisory lock on a connection of its own for
+    the whole pass, and a pass that finds it taken does nothing. Other databases (the tests' SQLite)
+    have one process."""
+    if engine.dialect.name != "postgresql":
+        return _deliver(engine, send, limit)
+    with engine.connect() as held:
+        got = held.exec_driver_sql("SELECT pg_try_advisory_lock(%s)" % _PASS_LOCK_KEY).scalar()
+        if not got:
+            return 0, 0
+        try:
+            return _deliver(engine, send, limit)
+        finally:
+            # Session-level, so nothing to commit (SQLAlchemy 1.4, Superset's, has no Connection.commit)
+            held.exec_driver_sql("SELECT pg_advisory_unlock(%s)" % _PASS_LOCK_KEY)
+
+
+def deliver_in_background(engine, send, limit: int = 100) -> threading.Thread:
+    """Run one delivery pass in a thread of its own and return it: a write never waits for the platform
+    (up to 5 s a call when it does not answer). The pass's locks keep two passes apart."""
+    worker = threading.Thread(target=deliver, args=(engine, send, limit), name="aisc-ledger-delivery",
+                              daemon=True)
+    worker.start()
+    return worker
+
+
+def _pending(engine, waiting: set[str], after: int, limit: int):
+    """The oldest undelivered rows after id `after`, leaving out the projects that wait this pass: reading
+    the oldest `limit` rows and skipping theirs let one project's queue hide every other's."""
+    query = select(OUTBOX).where(OUTBOX.c.delivered_at.is_(None), OUTBOX.c.refused.is_(None), OUTBOX.c.id > after)
+    if waiting:
+        query = query.where(OUTBOX.c.project_pid.notin_(sorted(waiting)))
+    with engine.connect() as conn:
+        return conn.execute(query.order_by(OUTBOX.c.id).limit(limit)).all()
+
+
+def _deliver(engine, send, limit: int) -> tuple[int, int]:
+    sent = failed = 0
+    waiting: set[str] = set()                                           # projects whose events wait this pass
+    for row in _rows_to_try(engine, waiting, limit):
+        status = send(row.project_pid, row.event)
+        if status is not None and 200 <= status < 300:
+            with engine.begin() as conn:
+                conn.execute(update(OUTBOX).where(OUTBOX.c.id == row.id)
+                             .values(delivered_at=datetime.now(timezone.utc)))
+            sent += 1
+            continue
+        failed += 1
+        if status is None:
+            _log.warning("ledger: the platform can't be asked; dashboard event %s and the rest stay queued",
+                         row.event.get("event_id"))
+            break
+        if status not in REFUSALS:
+            _log.warning("ledger: the platform answered %s for dashboard event %s; it and its project's later"
+                         " events stay queued", status, row.event.get("event_id"))
+            waiting.add(row.project_pid)
+            continue
+        _log.error("ledger: the platform refused dashboard event %s (%s, status %s); kept, not sent again",
+                   row.event.get("event_id"), row.event.get("action"), status)
+        with engine.begin() as conn:
+            conn.execute(update(OUTBOX).where(OUTBOX.c.id == row.id).values(refused=status))
+    return sent, failed
+
+
+def _rows_to_try(engine, waiting: set[str], limit: int):
+    """Up to `limit` rows to send, oldest first, read again past each project that starts waiting (the
+    caller adds it to `waiting`), so its later events are not tried and the others' still are."""
+    tried, after = 0, 0
+    while tried < limit:
+        rows = _pending(engine, waiting, after, limit - tried)
+        if not rows:
+            return
+        for row in rows:
+            after = row.id
+            if row.project_pid in waiting:
+                continue
+            tried += 1
+            yield row
+            if row.project_pid in waiting:                              # it failed: read again without it
+                break
+
+
+def _no_project(reply) -> bool:
+    """Whether a 404 is the platform's own "no project" answer (platform_service.routes.ledger: _queue_internal)."""
+    try:
+        detail = reply.json().get("detail")
+    except Exception:                                                   # noqa: BLE001 (not JSON: a proxy's page)
+        return False
+    return isinstance(detail, str) and detail.startswith("no project ")
+
+
+def http_sender(post=None):
+    """A `send` function for `deliver` that posts to the platform's internal ledger route.
+
+    It authenticates with PLATFORM_LEDGER_DASHBOARD_TOKEN and returns None (event stays queued) when that
+    token or PLATFORM_URL is not set. A 404 is returned as 404 only when the platform says it has no such
+    project (its `{"detail": "no project ..."}`); any other 404 is a wrong address, so None."""
+    if post is None:
+        import requests
+
+        post = requests.post
+
+    def send(pid: str, event: dict) -> int | None:
+        token = os.environ.get("PLATFORM_LEDGER_DASHBOARD_TOKEN", "")
+        base = os.environ.get("PLATFORM_URL", "").rstrip("/")
+        if not token or not base:
+            return None
+        try:
+            r = post(f"{base}/internal/projects/{pid}/ledger/events", data=json.dumps(event),
+                     headers={"Content-Type": "application/json", "X-AISC-Service-Token": token}, timeout=5)
+        except Exception:                                               # noqa: BLE001 (the platform is down)
+            _log.warning("ledger: the platform can't be reached; dashboard events stay queued")
+            return None
+        if r.status_code == 404 and not _no_project(r):
+            _log.warning("ledger: %s answered 404 without naming the project; check PLATFORM_URL", base)
+            return None
+        return r.status_code
+    return send
