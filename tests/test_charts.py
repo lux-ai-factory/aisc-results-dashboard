@@ -1,0 +1,305 @@
+# Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
+# SPDX-License-Identifier: Apache-2.0
+"""The translator from a plugin's default charts to Superset.
+
+A plugin declares its default charts as MetricVisualization (aisc-plugin-interface): a chart type, its
+metrics, a title, filters and grouping by dimensions. aisc_ext/charts.py, the only module that knows
+Superset's chart and dashboard formats, turns them into an export bundle that Superset's own import takes.
+Pure Python: no Superset here."""
+import importlib
+import uuid
+
+import pytest
+import yaml
+
+PID = "1e722ea2-4ce3-47fa-81bf-11a6b53ad679"
+DATASET_UUID = "aaaaaaaa-0000-4000-8000-000000000001"
+DATABASE_UUID = "bbbbbbbb-0000-4000-8000-000000000001"
+COLUMNS = ["pid", "score", "metric", "evaluated_at", "target_label", "tool", "run", "run_order", "feature",
+           "concern", "flag", "statistic", "p_value", "prompt", "response", "expected"]
+
+
+@pytest.fixture
+def charts():
+    return importlib.import_module("aisc_ext.charts")
+
+
+def viz(chart_type, metrics, **kw):
+    return {"chart_type": chart_type, "metrics": metrics, **kw}
+
+
+DRIFT = [viz("bars", ["Drift Score"], title="Drift Score"),
+         viz("bars", ["psi"], title="PSI per feature", group_by_dimensions=["feature"]),
+         viz("table", ["psi", "smd"], title="Drift tests per feature", group_by_dimensions=["feature"])]
+
+
+def settings(charts, v, label="Data Drift"):
+    return charts.chart_settings(v, plugin_label=label, columns=COLUMNS)
+
+
+def filters_of(params):
+    return {(f["subject"], f["operator"]): f["comparator"] for f in params["adhoc_filters"]}
+
+
+# ── Each kind ────────────────────────────────────────────────────────────────
+
+def test_bars_are_echarts_bars_along_the_grouping_with_a_series_per_metric_and_run(charts):
+    viz_type, params, _ = settings(charts, DRIFT[1])
+    assert viz_type == "echarts_timeseries_bar"
+    assert params["x_axis"] == "feature" and params["groupby"] == ["metric", "run"]
+    assert params["metrics"] == [{"expressionType": "SIMPLE", "aggregate": "AVG", "label": "score",
+                                  "column": {"column_name": "score"}}]
+
+
+def test_bars_with_no_grouping_go_along_the_metric(charts):
+    _, params, _ = settings(charts, DRIFT[0])
+    assert params["x_axis"] == "metric" and params["groupby"] == ["run"]
+
+
+def test_a_label_dimension_names_the_series(charts):
+    _, params, _ = settings(charts, viz("bars", ["Bias Evaluation Results"], group_by_dimensions=["concern"],
+                                        metric_label_dimension="flag"))
+    assert params["groupby"] == ["flag", "run"]
+
+
+def test_lines_go_along_the_runs(charts):
+    viz_type, params, _ = settings(charts, viz("line", ["Drift Score"]))
+    assert viz_type == "echarts_timeseries_line" and params["x_axis"] == "run_order"
+    assert params["groupby"] == ["metric"]
+
+
+def test_tables_aggregate_by_run_grouping_and_metric(charts):
+    viz_type, params, _ = settings(charts, DRIFT[2])
+    assert viz_type == "table" and params["query_mode"] == "aggregate"
+    assert params["groupby"] == ["run", "feature", "metric"]
+    assert [m["aggregate"] for m in params["metrics"]] == ["AVG"]
+
+
+def test_a_table_of_one_metric_needs_no_metric_column_and_names_its_value(charts):
+    """LangBiTe's Failed cases: one row per answer, the value column named by the metric."""
+    viz_type, params, _ = settings(charts, viz("table", ["Failed cases"], title="Failed cases",
+                                               group_by_dimensions=["concern", "prompt", "response", "expected"]))
+    assert viz_type == "table"
+    assert params["groupby"] == ["run", "concern", "prompt", "response", "expected"]
+    assert [(m["aggregate"], m["label"]) for m in params["metrics"]] == [("AVG", "Failed cases")]
+
+
+def test_bars_tilt_their_labels_so_every_category_is_named(charts):
+    """Five concerns side by side: without the tilt Superset (ECharts) hides every other label."""
+    _, params, _ = settings(charts, viz("bars", ["Bias Evaluation Results"], group_by_dimensions=["concern"]))
+    assert params["xAxisLabelRotation"] == 45
+
+
+def test_a_table_shows_every_row(charts):
+    """Every failed answer, not the first thousand: up to Superset's own row limit, paged in the browser."""
+    _, params, _ = settings(charts, viz("table", ["Failed cases"], group_by_dimensions=["concern"]))
+    assert params["row_limit"] == charts.TABLE_ROW_LIMIT == 50000
+    assert params["server_pagination"] is False and params["page_length"] == 50
+    assert params["include_search"] is True
+    _, bars, _ = settings(charts, viz("bars", ["Drift Score"]))
+    assert bars["row_limit"] == 1000
+
+
+def test_pies_split_by_metric_and_add_up(charts):
+    viz_type, params, _ = settings(charts, viz("pie", ["Anomaly Pass", "Anomaly Low"]))
+    assert viz_type == "pie" and params["groupby"] == ["metric"]
+    assert params["metric"]["aggregate"] == "SUM"
+
+
+@pytest.mark.parametrize("kind", ["scatter", "radar", "kde", "csv"])
+def test_kinds_superset_draws_differently_become_tables_and_say_so(charts, kind):
+    viz_type, _, description = settings(charts, viz(kind, ["psi"], title="x"))
+    assert viz_type == "table" and f"asked for: {kind}" in description
+
+
+# ── Filters ──────────────────────────────────────────────────────────────────
+
+def test_a_percent_chart_shows_its_ratios_as_percent(charts):
+    """A pass rate is a ratio from 0 to 1: unformatted, a concern that passed shows as "1".
+    A chart that says value_format "percent" is formatted so, whatever its kind."""
+    _, bars, _ = settings(charts, viz("bars", ["Pass rate"], group_by_dimensions=["concern"], value_format="percent"))
+    _, line, _ = settings(charts, viz("line", ["Pass rate"], value_format="percent"))
+    _, pie, _ = settings(charts, viz("pie", ["Pass rate"], value_format="percent"))
+    _, table, _ = settings(charts, viz("table", ["Pass rate"], value_format="percent"))
+    assert bars["y_axis_format"] == ".0%" and line["y_axis_format"] == ".0%"
+    assert pie["number_format"] == ".0%"
+    assert table["column_config"] == {"Pass rate": {"d3NumberFormat": ".0%"}}
+
+
+def test_a_chart_without_a_format_keeps_supersets_own(charts):
+    for kind in ("bars", "line", "pie", "table"):
+        _, params, _ = settings(charts, viz(kind, ["psi"]))
+        assert not {"y_axis_format", "number_format", "column_config"} & set(params), kind
+
+
+def test_every_chart_keeps_to_its_plugin_and_its_metrics(charts):
+    _, params, _ = settings(charts, DRIFT[2])
+    f = filters_of(params)
+    assert f[("tool", "==")] == "Data Drift" and f[("metric", "IN")] == ["psi", "smd"]
+
+
+def test_filter_dimensions_become_in_filters(charts):
+    _, params, _ = settings(charts, viz("bars", ["psi"], filter_dimensions={"flag": ["yes"]}))
+    assert filters_of(params)[("flag", "IN")] == ["yes"]
+
+
+# ── The default mark ─────────────────────────────────────────────────────────
+
+def test_titles_and_descriptions_say_default(charts):
+    title, description = charts.default_title(DRIFT[1]), settings(charts, DRIFT[1])[2]
+    assert title == "Default · PSI per feature"
+    assert description.startswith("Made by the Data Drift plugin. Use Save as to change it.")
+    assert charts.default_title(viz("bars", ["Drift Score", "psi"])) == "Default · Drift Score, psi"
+
+
+# ── An unknown dimension ─────────────────────────────────────────────────────
+
+def test_an_undeclared_dimension_is_dropped_and_said(charts):
+    _, params, description = settings(charts, viz("bars", ["psi"], group_by_dimensions=["segment"],
+                                                  filter_dimensions={"region": ["EU"]}))
+    assert params["x_axis"] == "metric"
+    assert ("region", "IN") not in filters_of(params)
+    assert "segment" in description and "region" in description
+
+
+# ── The bundle ───────────────────────────────────────────────────────────────
+
+def make_bundle(charts, visualizations=DRIFT, user_part=None, latest_run="Run 2 · 04 Oct 2026, 20:39"):
+    return charts.bundle(pid=PID, project_name="mcas", plugin="data-monitor::DataDriftPlugin", label="Data Drift",
+                         version="0.4.1", visualizations=visualizations, dataset_uuid=DATASET_UUID,
+                         dataset_name="engine_results_x", database_uuid=DATABASE_UUID, database_name="AISC mcas",
+                         sqlalchemy_uri="postgresql+psycopg2://dashboard_ro:XXXXXXXXXX@postgres:5432/project_x",
+                         columns=COLUMNS, starter_chart_id=42, user_part=user_part, latest_run=latest_run)
+
+
+def test_the_bundle_holds_what_the_import_needs(charts):
+    files = make_bundle(charts)
+    assert yaml.safe_load(files["metadata.yaml"])["type"] == "Dashboard"
+    db = [k for k in files if k.startswith("databases/")]
+    ds = [k for k in files if k.startswith("datasets/")]
+    assert len(db) == 1 and yaml.safe_load(files[db[0]])["uuid"] == DATABASE_UUID
+    assert len(ds) == 1 and yaml.safe_load(files[ds[0]])["uuid"] == DATASET_UUID
+    chart_files = sorted(k for k in files if k.startswith("charts/"))
+    assert len(chart_files) == 3
+    for k in chart_files:
+        c = yaml.safe_load(files[k])
+        assert c["dataset_uuid"] == DATASET_UUID and c["slice_name"].startswith("Default · ")
+        assert c["params"]["aisc_chart_id"] and c["params"]["aisc_plugin"] == "data-monitor::DataDriftPlugin"
+    dash = yaml.safe_load(files[next(k for k in files if k.startswith("dashboards/"))])
+    assert dash["slug"] == charts.plugin_slug(PID, "data-monitor::DataDriftPlugin")
+    assert dash["dashboard_title"] == "mcas · Data Drift"
+    placed = [v for v in dash["position"].values() if isinstance(v, dict) and v.get("type") == "CHART"]
+    assert len(placed) == 3 and all("chartId" in p["meta"] and "uuid" in p["meta"] for p in placed)
+
+
+def test_chart_uuids_are_stable_and_differ_by_project_plugin_and_chart(charts):
+    a, b = make_bundle(charts), make_bundle(charts)
+    assert sorted(k for k in a if k.startswith("charts/")) == sorted(k for k in b if k.startswith("charts/"))
+    u = charts.chart_uuid(PID, "p::A", 0, "x")
+    assert u == str(uuid.UUID(u)) and u != charts.chart_uuid(PID, "p::B", 0, "x") != charts.chart_uuid(PID, "p::A", 1, "x")
+
+
+def test_the_layout_has_defaults_then_your_charts_with_the_starter_link(charts):
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts).items() if k.startswith("dashboards/")))
+    pos = dash["position"]
+    order = []
+    for child in pos["GRID_ID"]["children"]:
+        node = pos[child]
+        order.append(node["type"])
+    assert order[0] == "HEADER" and pos[pos["GRID_ID"]["children"][0]]["meta"]["text"] == "Default charts · Data Drift 0.4.1"
+    assert order.count("ROW") >= 2 and "MARKDOWN" in order
+    headers = [pos[c]["meta"]["text"] for c in pos["GRID_ID"]["children"] if pos[c]["type"] == "HEADER"]
+    assert headers == ["Default charts · Data Drift 0.4.1", "Your charts"]
+    md = next(pos[c] for c in pos["GRID_ID"]["children"] if pos[c]["type"] == "MARKDOWN")
+    assert "/explore/?slice_id=42" in md["meta"]["code"] and "Build a chart of your own" in md["meta"]["code"]
+    # rows of two defaults
+    rows = [pos[c] for c in pos["GRID_ID"]["children"] if pos[c]["type"] == "ROW"]
+    assert [len(r["children"]) for r in rows] == [2, 1]
+
+
+def _rows(dash):
+    pos = dash["position"]
+    return [[pos[c]["meta"] for c in pos[r]["children"]] for r in pos["GRID_ID"]["children"]
+            if pos[r]["type"] == "ROW"]
+
+
+def test_a_table_takes_a_full_row_below_and_a_lone_chart_the_full_width(charts):
+    """LangBiTe: the pass rate per concern, and below it the failed cases, both full width; a
+    table is taller (it lists every failed answer). Two charts that are not tables still share a row."""
+    lb = [viz("bars", ["Bias Evaluation Results"], title="Pass rate per concern", group_by_dimensions=["concern"]),
+          viz("table", ["Failed cases"], title="Failed cases", group_by_dimensions=["concern", "prompt"])]
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts, visualizations=lb).items()
+                               if k.startswith("dashboards/")))
+    rows = _rows(dash)
+    assert [[(m["sliceName"], m["width"], m["height"]) for m in r] for r in rows] == [
+        [("Default · Pass rate per concern", 12, 50)], [("Default · Failed cases", 12, 90)]]
+    drift = _rows(yaml.safe_load(next(v for k, v in make_bundle(charts).items() if k.startswith("dashboards/"))))
+    assert [[(m["width"], m["height"]) for m in r] for r in drift] == [[(6, 50), (6, 50)], [(12, 90)]]
+
+
+def test_with_no_results_yet_the_tile_says_to_run_the_test(charts):
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts, visualizations=[], latest_run=None).items()
+                               if k.startswith("dashboards/")))
+    md = [v for v in dash["position"].values() if isinstance(v, dict) and v.get("type") == "MARKDOWN"]
+    assert any("No results yet" in m["meta"]["code"] and "Data Drift" in m["meta"]["code"] for m in md)
+    assert not any("slice_id" in m["meta"]["code"] for m in md)
+
+
+def test_a_run_with_no_default_charts_says_the_version_declares_none(charts):
+    """Results, but a plugin version with no default charts (LangBiTe 0.2.4, for one): not "No results
+    yet", and the starter link is offered."""
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts, visualizations=[]).items()
+                               if k.startswith("dashboards/")))
+    md = [v["meta"]["code"] for v in dash["position"].values() if isinstance(v, dict) and v.get("type") == "MARKDOWN"]
+    assert not any("No results yet" in m for m in md)
+    assert any("Data Drift 0.4.1 declares no default charts" in m for m in md)
+    assert any("/explore/?slice_id=42" in m for m in md)
+
+
+def test_the_users_part_of_the_layout_is_kept_after_your_charts(charts):
+    user_part = {"CHART-mine": {"type": "CHART", "id": "CHART-mine", "children": [], "meta": {"chartId": 7,
+                 "uuid": "cccccccc-0000-4000-8000-000000000001", "width": 4, "height": 50}}}
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts, user_part=user_part).items() if k.startswith("dashboards/")))
+    pos = dash["position"]
+    grid = pos["GRID_ID"]["children"]
+    assert grid[-1] == "CHART-mine" and grid.index("CHART-mine") > grid.index(
+        next(c for c in grid if pos[c]["type"] == "HEADER" and pos[c]["meta"]["text"] == "Your charts"))
+    assert pos["CHART-mine"]["parents"] == ["ROOT_ID", "GRID_ID"]
+
+
+def test_the_run_and_target_filters(charts):
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts).items() if k.startswith("dashboards/")))
+    nf = {f["name"]: f for f in dash["metadata"]["native_filter_configuration"]}
+    run, target = nf["Run"], nf["Target"]
+    assert run["targets"] == [{"datasetUuid": DATASET_UUID, "column": {"name": "run"}}]
+    assert run["controlValues"]["multiSelect"] and run["controlValues"]["sortAscending"] is False
+    assert run["sortMetric"] == charts.LATEST_RUN_METRIC
+    # Superset 4.1.1 selects a "first value by default" without applying it: the latest
+    # run is written as the filter's default instead, which it applies on load
+    assert run["controlValues"]["defaultToFirstItem"] is False
+    assert run["defaultDataMask"]["filterState"]["value"] == ["Run 2 · 04 Oct 2026, 20:39"]
+    assert run["defaultDataMask"]["extraFormData"]["filters"] == [
+        {"col": "run", "op": "IN", "val": ["Run 2 · 04 Oct 2026, 20:39"]}]
+    assert target["targets"][0]["column"]["name"] == "target_label"
+    assert dash["metadata"]["aisc_plugin"] == "data-monitor::DataDriftPlugin" and dash["metadata"]["aisc_project"] == PID
+
+
+def test_the_starter_chart_bundle(charts):
+    files = charts.starter_bundle(pid=PID, plugin="data-monitor::DataDriftPlugin", label="Data Drift",
+                                  dataset_uuid=DATASET_UUID, dataset_name="engine_results_x",
+                                  database_uuid=DATABASE_UUID, database_name="AISC mcas",
+                                  sqlalchemy_uri="postgresql+psycopg2://dashboard_ro:XXXXXXXXXX@postgres:5432/project_x",
+                                  columns=COLUMNS)
+    assert yaml.safe_load(files["metadata.yaml"])["type"] == "Slice"
+    (chart,) = [yaml.safe_load(v) for k, v in files.items() if k.startswith("charts/")]
+    assert chart["slice_name"] == "New chart · Data Drift"
+    assert chart["uuid"] == charts.starter_uuid(PID, "data-monitor::DataDriftPlugin")
+    assert ("tool", "==") in filters_of(chart["params"])
+    assert "aisc_chart_id" not in chart["params"]           # Save as gives the user a chart AISC never touches
+    assert chart["params"]["aisc_project"] == PID           # so unregister finds it (it is on no dashboard)
+
+
+def test_before_any_run_the_run_filter_falls_back_to_the_first_value(charts):
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts, latest_run=None).items() if k.startswith("dashboards/")))
+    run = next(f for f in dash["metadata"]["native_filter_configuration"] if f["name"] == "Run")
+    assert run["controlValues"]["defaultToFirstItem"] is True and run["defaultDataMask"]["filterState"] == {}
