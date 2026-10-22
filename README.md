@@ -128,10 +128,11 @@ among others), then start the stack. The dashboard needs the aisc compose's own
 which has neither, it refuses to start.
 
 ```bash
-./scripts/secrets.sh
-docker compose -p aisc --env-file env.runtime -f docker-compose.plugin_downloader.yml \
-  -f docker-compose-infra.development.yml -f docker-compose.development.yml up -d --build
+uv run scripts/aisc.py start
 ```
+
+Run it from the aisc folder. It makes the secrets if they are missing, builds and starts the stack,
+and keeps port 443 answering on an https install.
 
 The `superset` metadata database and the `dashboard_ro` role are created by the aisc
 repo's `init/` scripts on a fresh Postgres volume. Project dashboards appear when the
