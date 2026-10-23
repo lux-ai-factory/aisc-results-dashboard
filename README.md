@@ -142,10 +142,11 @@ Changes to `superset_config.py`, `aisc_ext/` or `branding/` are bind-mounted, so
 of the `dashboard` container picks them up. Only a change to the `Dockerfile` needs a
 rebuild.
 
-To check the Review page and the comments API inside the running container:
+To check the Review page and the comments API inside the running container, run this from the
+aisc folder after `. scripts/lib/stack-name.sh`, which names the container of the install in use:
 
 ```bash
-docker exec -i dashboard python - < scripts/verify_review.py
+docker exec -i "$(aisc_container dashboard)" python - < scripts/verify_review.py
 ```
 
 It creates its own test objects, removes them afterwards and exits 0 when every check holds.

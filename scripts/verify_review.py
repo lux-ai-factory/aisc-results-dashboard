@@ -2,7 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Check the Review page and the comments API inside a running Superset.
 
-    docker exec -i dashboard python - < scripts/verify_review.py
+    docker exec -i "$(aisc_container dashboard)" python - < scripts/verify_review.py
+
+Run it from the aisc folder after `. scripts/lib/stack-name.sh`, which names the
+container of the install in use.
 
 The unit tests cover what the page decides; this covers what only Superset can
 answer: that the routes exist, that they ask who is calling, and that the
