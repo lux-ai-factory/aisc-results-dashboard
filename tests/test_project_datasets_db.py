@@ -242,8 +242,8 @@ INSERT INTO submission_answer (id, "submissionId", "questionId", answer, score,
 COMP_A, COMP_B = "aaaaaaaa-0000-4000-8000-00000000000a", "bbbbbbbb-0000-4000-8000-00000000000b"
 MIRROR_SYS, MIRROR_A, MIRROR_B, PLAIN = (f"cccccccc-0000-4000-8000-00000000000{i}" for i in range(1, 5))
 #: one measurement per case, by pid
-M_A, M_SYS, M_B, M_NO_INPUT, M_NOT_TARGET, M_LOCAL, M_ONLY_LOCAL = (
-    f"dddddddd-0000-4000-8000-00000000000{i}" for i in range(1, 8))
+M_A, M_SYS, M_B, M_NO_INPUT, M_NOT_TARGET, M_LOCAL, M_ONLY_LOCAL, M_TWO_MARKED = (
+    f"dddddddd-0000-4000-8000-00000000000{i}" for i in range(1, 9))
 #: the model file a local run assessed, and the value the worker stores on that run's model input
 MODEL_FILE = "cccccccc-0000-4000-8000-000000000005"
 LOCAL_VALUE = '{"local_model": {"file": "scoring.onnx", "sha256": "' + "ab" * 32 + '"}}'
@@ -296,8 +296,9 @@ INSERT INTO aisc_backend_evaluationinput (pid, name, value, evaluation_plugin_id
     return sql
 
 
-E_TWO, E_STALE, E_NO_INPUT, E_NOT_TARGET, E_LOCAL, E_ONLY_LOCAL = (
-    f"eeeeeeee-0000-4000-8000-00000000000{i}" for i in range(1, 7))
+E_TWO, E_STALE, E_NO_INPUT, E_NOT_TARGET, E_LOCAL, E_ONLY_LOCAL, E_TWO_MARKED = (
+    f"eeeeeeee-0000-4000-8000-00000000000{i}" for i in range(1, 8))
+OTHER_LOCAL_VALUE = '{"local_model": {"file": "another.onnx", "sha256": "' + "cd" * 32 + '"}}'
 
 
 def _seed_targets(db):
@@ -310,7 +311,9 @@ def _seed_targets(db):
          + _run_sql(E_STALE, "three", [("target", MIRROR_B)], M_B, 0.3)
          + _run_sql(E_NO_INPUT, "four", [("dataset", MIRROR_A)], M_NO_INPUT, 0.4)
          + _run_sql(E_NOT_TARGET, "five", [("target", PLAIN)], M_NOT_TARGET, 0.5)
-         + _run_sql(E_LOCAL, "six", [("model", MODEL_FILE, LOCAL_VALUE)], M_LOCAL, 0.6), db=db)
+         + _run_sql(E_LOCAL, "six", [("model", MODEL_FILE, LOCAL_VALUE)], M_LOCAL, 0.6)
+         + _run_sql(E_TWO_MARKED, "eight", [("model", MODEL_FILE, LOCAL_VALUE), ("reference", MODEL_FILE, OTHER_LOCAL_VALUE)],
+                    M_TWO_MARKED, 0.8), db=db)
 
 
 def _seed_local_only(db):
@@ -518,7 +521,7 @@ def test_targets_a_run_with_no_target_input_is_unassigned(seeded, projects):
 def test_targets_an_evaluation_with_no_plugin_run_is_unassigned(seeded, projects):
     """The base seed's evaluation, as made before the engine kept plugin runs by tool."""
     rows = _targets(seeded, projects)
-    (base,) = set(rows) - {M_A, M_SYS, M_B, M_NO_INPUT, M_NOT_TARGET, M_LOCAL}
+    (base,) = set(rows) - {M_A, M_SYS, M_B, M_NO_INPUT, M_NOT_TARGET, M_LOCAL, M_TWO_MARKED}
     assert rows[base] == ("", "", "", "unassigned", "unassigned")
 
 
@@ -530,7 +533,7 @@ def test_targets_a_target_input_on_a_component_that_is_no_mirror_is_not_a_target
 def test_targets_two_plugins_of_one_evaluation_each_get_their_own_target(seeded, projects):
     rows = _targets(seeded, projects)
     assert (rows[M_A][0], rows[M_SYS][0]) == (f"component:{COMP_A}", "system")
-    assert len(rows) == 7
+    assert len(rows) == 8
 
 
 def test_targets_a_run_on_a_local_model_file_is_local_and_named_by_the_file(seeded, projects):
@@ -541,7 +544,12 @@ def test_targets_a_run_on_a_local_model_file_is_local_and_named_by_the_file(seed
 def test_targets_card_runs_are_unchanged_beside_a_local_run(seeded, projects):
     rows = _targets(seeded, projects)
     assert rows[M_A][-1] == "current" and rows[M_B][-1] == "stale" and rows[M_NO_INPUT][-1] == "unassigned"
-    assert [pid for pid, row in rows.items() if row[-1] == "local"] == [M_LOCAL]
+    assert sorted(pid for pid, row in rows.items() if row[-1] == "local") == [M_LOCAL, M_TWO_MARKED]
+
+
+def test_targets_a_run_with_two_local_inputs_is_one_row_named_by_the_first_file(seeded, projects):
+    """_targets fails on a repeated measurement; the file chosen is the smallest name, the same every time."""
+    assert _targets(seeded, projects)[M_TWO_MARKED] == ("", "", "", "another.onnx", "local")
 
 
 def test_targets_a_project_with_no_card_shows_all_its_local_runs(seeded, projects):
