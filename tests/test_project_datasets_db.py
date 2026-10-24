@@ -244,7 +244,7 @@ MIRROR_SYS, MIRROR_A, MIRROR_B, PLAIN = (f"cccccccc-0000-4000-8000-00000000000{i
 #: one measurement per case, by pid
 M_A, M_SYS, M_B, M_NO_INPUT, M_NOT_TARGET, M_LOCAL, M_ONLY_LOCAL, M_TWO_MARKED = (
     f"dddddddd-0000-4000-8000-00000000000{i}" for i in range(1, 9))
-M_MIXED_CARD, M_MIXED_LOCAL = "dddddddd-0000-4000-8000-000000000009", "dddddddd-0000-4000-8000-00000000000a"
+M_MIXED_CARD, M_MIXED_LOCAL, M_TEXT_MARKER = (f"dddddddd-0000-4000-8000-00000000000{i}" for i in "9ab")
 #: the model file a local run assessed, and the value the worker stores on that run's model input
 MODEL_FILE = "cccccccc-0000-4000-8000-000000000005"
 LOCAL_VALUE = '{"local_model": {"file": "scoring.onnx", "sha256": "' + "ab" * 32 + '"}}'
@@ -300,14 +300,16 @@ INSERT INTO aisc_backend_evaluationinput (pid, name, value, evaluation_plugin_id
 E_TWO, E_STALE, E_NO_INPUT, E_NOT_TARGET, E_LOCAL, E_ONLY_LOCAL, E_TWO_MARKED = (
     f"eeeeeeee-0000-4000-8000-00000000000{i}" for i in range(1, 8))
 OTHER_LOCAL_VALUE = '{"local_model": {"file": "another.onnx", "sha256": "' + "cd" * 32 + '"}}'
-E_MIXED = "eeeeeeee-0000-4000-8000-000000000008"
+E_MIXED, E_TEXT_MARKER = "eeeeeeee-0000-4000-8000-000000000008", "eeeeeeee-0000-4000-8000-000000000009"
+#: a local_model that is no object: not the worker's marker (the engine refuses one a client writes)
+TEXT_MARKER_VALUE = '{"local_model": "scoring.onnx"}'
 
 
 def _seed_targets(db):
     """R's targets and five plugin runs besides the base evaluation (which has no plugin run at
     all): one evaluation running two plugins on two targets, a stale target, a run with inputs but
     no `target`, a `target` input on a component that is no mirror, local runs (one beside a card run
-    of its own evaluation)."""
+    of its own evaluation), and a run whose local_model is text."""
     psql(TARGETS_SQL
          + _run_sql(E_TWO, "one", [("target", MIRROR_A), ("dataset", PLAIN)], M_A, 0.1)
          + _run_sql(E_TWO, "two", [("target", MIRROR_SYS)], M_SYS, 0.2)
@@ -318,7 +320,8 @@ def _seed_targets(db):
          + _run_sql(E_TWO_MARKED, "eight", [("model", MODEL_FILE, LOCAL_VALUE), ("reference", MODEL_FILE, OTHER_LOCAL_VALUE)],
                     M_TWO_MARKED, 0.8)
          + _run_sql(E_MIXED, "nine", [("target", MIRROR_A)], M_MIXED_CARD, 0.9)
-         + _run_sql(E_MIXED, "ten", [("model", MODEL_FILE, LOCAL_VALUE)], M_MIXED_LOCAL, 0.95), db=db)
+         + _run_sql(E_MIXED, "ten", [("model", MODEL_FILE, LOCAL_VALUE)], M_MIXED_LOCAL, 0.95)
+         + _run_sql(E_TEXT_MARKER, "eleven", [("model", MODEL_FILE, TEXT_MARKER_VALUE)], M_TEXT_MARKER, 0.99), db=db)
 
 
 def _seed_local_only(db):
@@ -527,7 +530,7 @@ def test_targets_an_evaluation_with_no_plugin_run_is_unassigned(seeded, projects
     """The base seed's evaluation, as made before the engine kept plugin runs by tool."""
     rows = _targets(seeded, projects)
     (base,) = set(rows) - {M_A, M_SYS, M_B, M_NO_INPUT, M_NOT_TARGET, M_LOCAL, M_TWO_MARKED,
-                           M_MIXED_CARD, M_MIXED_LOCAL}
+                           M_MIXED_CARD, M_MIXED_LOCAL, M_TEXT_MARKER}
     assert rows[base] == ("", "", "", "unassigned", "unassigned")
 
 
@@ -539,7 +542,7 @@ def test_targets_a_target_input_on_a_component_that_is_no_mirror_is_not_a_target
 def test_targets_two_plugins_of_one_evaluation_each_get_their_own_target(seeded, projects):
     rows = _targets(seeded, projects)
     assert (rows[M_A][0], rows[M_SYS][0]) == (f"component:{COMP_A}", "system")
-    assert len(rows) == 10
+    assert len(rows) == 11
 
 
 def test_targets_a_run_on_a_local_model_file_is_local_and_named_by_the_file(seeded, projects):
@@ -557,6 +560,10 @@ def test_targets_a_card_run_and_a_local_run_of_one_evaluation_are_each_labelled_
     rows = _targets(seeded, projects)
     assert rows[M_MIXED_CARD] == (f"component:{COMP_A}", "component", "model", "Scoring model", "current")
     assert rows[M_MIXED_LOCAL] == ("", "", "", "scoring.onnx", "local")
+
+
+def test_targets_a_local_model_that_is_not_an_object_is_no_local_marker(seeded, projects):
+    assert _targets(seeded, projects)[M_TEXT_MARKER] == ("", "", "", "unassigned", "unassigned")
 
 
 def test_targets_a_run_with_two_local_inputs_is_one_row_named_by_the_first_file(seeded, projects):

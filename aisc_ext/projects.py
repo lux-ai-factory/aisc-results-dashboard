@@ -69,7 +69,8 @@ MEMBER_PROJECTS_SQL = "SELECT project_id, role FROM core.project_member WHERE su
 #: target_status: 'unassigned' (the run has no ``target`` input, as every evaluation made before
 #: targets), 'not a target' (its component is no mirror), 'stale' (a component the latest card no
 #: longer lists), else 'current'. A run on a local model file (the engine worker stores
-#: {"local_model": {"file", "sha256"}} as the value of its model input) is 'local', whatever else it has, and
+#: {"local_model": {"file", "sha256"}} as the value of its model input; a local_model that is no object marks
+#: nothing, as the engine refuses markers a client writes) is 'local', whatever else it has, and
 #: its label is the file name (the first by name when several inputs are marked): it is shown apart from the card's runs, never as one of them.
 #: target_label is never NULL, so no chart shows an empty label.
 #: The dimensions plugins write: each key a column of its own, so a
@@ -116,7 +117,7 @@ SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
   LEFT JOIN engine.aisc_backend_aicomponent tc ON tc.id = ti.component_id
   LEFT JOIN target.target t ON t.engine_component = tc.pid
   LEFT JOIN (SELECT evaluation_plugin_id,
-                    min(CASE WHEN value->'local_model' IS NOT NULL
+                    min(CASE WHEN jsonb_typeof(value->'local_model') = 'object'
                              THEN COALESCE(value->'local_model'->>'file', 'local model') END) AS file
                FROM engine.aisc_backend_evaluationinput GROUP BY evaluation_plugin_id) lm
          ON lm.evaluation_plugin_id = ep.id
