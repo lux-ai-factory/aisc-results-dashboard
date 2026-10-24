@@ -45,6 +45,7 @@ QV1 = "33333333-3333-4333-8333-333333333333"
 R = "5c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f"
 RV1 = "44444444-4444-4444-8444-444444444444"
 RV2 = "55555555-5555-4555-8555-555555555555"
+LOCAL_ONLY = "7a1c2d3e-4f5a-4b6c-8d7e-9f0a1b2c3d4e"
 
 pytestmark = pytest.mark.skipif(
     not CONTAINER, reason="AISC_DASHBOARD_TEST_PG_CONTAINER not set (throwaway Postgres)")
@@ -144,6 +145,7 @@ class Seeded:
         self.db = f"project_{P_HEX}"
         self.q_db = f"project_{Q.replace('-', '')}"
         self.r_db = f"project_{R.replace('-', '')}"
+        self.local_db = f"project_{LOCAL_ONLY.replace('-', '')}"
         self.missing = {}
 
     def need(self, *parts):
@@ -169,6 +171,11 @@ def seeded():
         _seed_targets(s.r_db)
     except AssertionError as exc:
         s.missing["targets"] = str(exc)[-600:]
+    try:
+        _seed_project(s.local_db, [], None)
+        _seed_local_only(s.local_db)
+    except AssertionError as exc:
+        s.missing["local"] = str(exc)[-600:]
     return s
 
 
@@ -198,8 +205,9 @@ def _seed_project(db, versions, eval_version, *, answer_version=None):
     psql(PRISMA_MIGRATIONS_DDL, db=db)
     for f in sorted((ROOT / "apps/controls/prisma/migrations").glob("*/migration.sql")):
         psql("SET ROLE controls_rw;\nSET search_path = controls;\n" + f.read_text(), db=db)
-    rows =", ".join(f"('{v}', {n}, 'X', '1.2.0')" for v, n in versions)
-    psql(f"SET ROLE platform_rw;\nINSERT INTO project.system (pid, number, name, version) VALUES {rows};", db=db)
+    if versions:
+        rows = ", ".join(f"('{v}', {n}, 'X', '1.2.0')" for v, n in versions)
+        psql(f"SET ROLE platform_rw;\nINSERT INTO project.system (pid, number, name, version) VALUES {rows};", db=db)
     # The SELECT grant stands in for the grants the engine's project migration makes.
     psql(ENGINE_DDL + ENGINE_GRANTS, db=db)
     psql(f"""
@@ -208,7 +216,7 @@ SET search_path = engine;
 INSERT INTO aisc_backend_project (pid, name, description, project_id) VALUES (gen_random_uuid(), 'X', '', '{pid}');
 INSERT INTO aisc_backend_metric (pid, name) VALUES (gen_random_uuid(), 'accuracy');
 INSERT INTO aisc_backend_evaluation (pid, status, project_id, system_id)
-  SELECT gen_random_uuid(), 'Finished', id, '{eval_version}' FROM aisc_backend_project;
+  SELECT gen_random_uuid(), 'Finished', id, {f"'{eval_version}'" if eval_version else "NULL"} FROM aisc_backend_project;
 INSERT INTO aisc_backend_observation (pid, evaluation_id) SELECT gen_random_uuid(), id FROM aisc_backend_evaluation;
 INSERT INTO aisc_backend_measurement (pid, time, score, unit, metric_id, observation_id)
   SELECT gen_random_uuid(), now(), 0.9, 'ratio', (SELECT id FROM aisc_backend_metric), id FROM aisc_backend_observation;
@@ -234,7 +242,11 @@ INSERT INTO submission_answer (id, "submissionId", "questionId", answer, score,
 COMP_A, COMP_B = "aaaaaaaa-0000-4000-8000-00000000000a", "bbbbbbbb-0000-4000-8000-00000000000b"
 MIRROR_SYS, MIRROR_A, MIRROR_B, PLAIN = (f"cccccccc-0000-4000-8000-00000000000{i}" for i in range(1, 5))
 #: one measurement per case, by pid
-M_A, M_SYS, M_B, M_NO_INPUT, M_NOT_TARGET = (f"dddddddd-0000-4000-8000-00000000000{i}" for i in range(1, 6))
+M_A, M_SYS, M_B, M_NO_INPUT, M_NOT_TARGET, M_LOCAL, M_ONLY_LOCAL = (
+    f"dddddddd-0000-4000-8000-00000000000{i}" for i in range(1, 8))
+#: the model file a local run assessed, and the value the worker stores on that run's model input
+MODEL_FILE = "cccccccc-0000-4000-8000-000000000005"
+LOCAL_VALUE = '{"local_model": {"file": "scoring.onnx", "sha256": "' + "ab" * 32 + '"}}'
 
 TARGETS_SQL = f"""
 SET ROLE platform_rw;
@@ -249,18 +261,18 @@ INSERT INTO aisc_backend_aisystem (pid, name, project_id) SELECT gen_random_uuid
 INSERT INTO aisc_backend_aicomponent (pid, name, component_type, system_id)
   SELECT c.pid::uuid, c.name, c.type, s.id FROM aisc_backend_aisystem s,
   (VALUES ('{MIRROR_SYS}', 'target: The system', 'resource'), ('{MIRROR_A}', 'target: Scoring model', 'resource'),
-          ('{MIRROR_B}', 'target: Old dataset', 'resource'), ('{PLAIN}', 'Some dataset', 'dataset')) c(pid, name, type);
+          ('{MIRROR_B}', 'target: Old dataset', 'resource'), ('{PLAIN}', 'Some dataset', 'dataset'), ('{MODEL_FILE}', 'scoring.onnx', 'model')) c(pid, name, type);
 """
 
 
-def _run_sql(evaluation, plugin, inputs, measurement, score):
+def _run_sql(evaluation, plugin, inputs, measurement, score, system=RV2):
     """One plugin run of `evaluation` (made if new): the plugin `plugin` of package aisc_demo v1.0,
     its config, the run with its inputs (name, component pid), the observation the engine writes
     for it (tool = str(plugin)) and one measurement."""
     tool = f"aisc_demo::{plugin} (v1.0)"
     sql = f"""
 INSERT INTO aisc_backend_evaluation (pid, status, project_id, system_id)
-  SELECT '{evaluation}', 'Done', id, '{RV2}' FROM aisc_backend_project
+  SELECT '{evaluation}', 'Done', id, {f"'{system}'" if system else "NULL"} FROM aisc_backend_project
   WHERE NOT EXISTS (SELECT 1 FROM aisc_backend_evaluation WHERE pid = '{evaluation}');
 INSERT INTO aisc_backend_plugin (pid, name, package_name, version, project_id)
   SELECT gen_random_uuid(), '{plugin}', 'aisc_demo', '1.0', id FROM aisc_backend_project;
@@ -275,16 +287,17 @@ INSERT INTO aisc_backend_measurement (pid, time, score, unit, metric_id, observa
   SELECT '{measurement}', now(), {score}, 'ratio', (SELECT id FROM aisc_backend_metric), id
   FROM aisc_backend_observation WHERE tool = '{tool}';
 """
-    for name, component in inputs:
+    for name, component, *value in inputs:
         sql += f"""
-INSERT INTO aisc_backend_evaluationinput (pid, name, evaluation_plugin_id, component_id)
-  SELECT gen_random_uuid(), '{name}', r.id, c.id FROM aisc_backend_evaluationplugin r, aisc_backend_aicomponent c
+INSERT INTO aisc_backend_evaluationinput (pid, name, value, evaluation_plugin_id, component_id)
+  SELECT gen_random_uuid(), '{name}', '{value[0] if value else "{}"}', r.id, c.id FROM aisc_backend_evaluationplugin r, aisc_backend_aicomponent c
   WHERE r.name = '{plugin} run' AND c.pid = '{component}';
 """
     return sql
 
 
-E_TWO, E_STALE, E_NO_INPUT, E_NOT_TARGET = (f"eeeeeeee-0000-4000-8000-00000000000{i}" for i in range(1, 5))
+E_TWO, E_STALE, E_NO_INPUT, E_NOT_TARGET, E_LOCAL, E_ONLY_LOCAL = (
+    f"eeeeeeee-0000-4000-8000-00000000000{i}" for i in range(1, 7))
 
 
 def _seed_targets(db):
@@ -296,7 +309,20 @@ def _seed_targets(db):
          + _run_sql(E_TWO, "two", [("target", MIRROR_SYS)], M_SYS, 0.2)
          + _run_sql(E_STALE, "three", [("target", MIRROR_B)], M_B, 0.3)
          + _run_sql(E_NO_INPUT, "four", [("dataset", MIRROR_A)], M_NO_INPUT, 0.4)
-         + _run_sql(E_NOT_TARGET, "five", [("target", PLAIN)], M_NOT_TARGET, 0.5), db=db)
+         + _run_sql(E_NOT_TARGET, "five", [("target", PLAIN)], M_NOT_TARGET, 0.5)
+         + _run_sql(E_LOCAL, "six", [("model", MODEL_FILE, LOCAL_VALUE)], M_LOCAL, 0.6), db=db)
+
+
+def _seed_local_only(db):
+    """A project with no AI card: every run is on a local model file."""
+    psql("""
+SET ROLE engine_rw;
+SET search_path = engine;
+INSERT INTO aisc_backend_aisystem (pid, name, project_id) SELECT gen_random_uuid(), 'X', id FROM aisc_backend_project;
+INSERT INTO aisc_backend_aicomponent (pid, name, component_type, system_id)
+  SELECT '%s', 'scoring.onnx', 'model', id FROM aisc_backend_aisystem;
+""" % MODEL_FILE + _run_sql(E_ONLY_LOCAL, "seven", [("model", MODEL_FILE, LOCAL_VALUE)], M_ONLY_LOCAL, 0.7,
+                            system=None), db=db)
 
 
 def _rows(out):
@@ -492,7 +518,7 @@ def test_targets_a_run_with_no_target_input_is_unassigned(seeded, projects):
 def test_targets_an_evaluation_with_no_plugin_run_is_unassigned(seeded, projects):
     """The base seed's evaluation, as made before the engine kept plugin runs by tool."""
     rows = _targets(seeded, projects)
-    (base,) = set(rows) - {M_A, M_SYS, M_B, M_NO_INPUT, M_NOT_TARGET}
+    (base,) = set(rows) - {M_A, M_SYS, M_B, M_NO_INPUT, M_NOT_TARGET, M_LOCAL}
     assert rows[base] == ("", "", "", "unassigned", "unassigned")
 
 
@@ -504,7 +530,25 @@ def test_targets_a_target_input_on_a_component_that_is_no_mirror_is_not_a_target
 def test_targets_two_plugins_of_one_evaluation_each_get_their_own_target(seeded, projects):
     rows = _targets(seeded, projects)
     assert (rows[M_A][0], rows[M_SYS][0]) == (f"component:{COMP_A}", "system")
-    assert len(rows) == 6
+    assert len(rows) == 7
+
+
+def test_targets_a_run_on_a_local_model_file_is_local_and_named_by_the_file(seeded, projects):
+    """Apart from the card runs: no target key, status 'local', the file name as the label."""
+    assert _targets(seeded, projects)[M_LOCAL] == ("", "", "", "scoring.onnx", "local")
+
+
+def test_targets_card_runs_are_unchanged_beside_a_local_run(seeded, projects):
+    rows = _targets(seeded, projects)
+    assert rows[M_A][-1] == "current" and rows[M_B][-1] == "stale" and rows[M_NO_INPUT][-1] == "unassigned"
+    assert [pid for pid, row in rows.items() if row[-1] == "local"] == [M_LOCAL]
+
+
+def test_targets_a_project_with_no_card_shows_all_its_local_runs(seeded, projects):
+    seeded.need("local")
+    out = psql(f"SELECT pid, target_label, target_status, system_version FROM ({projects.engine_results_sql()}) t;",
+               db=seeded.local_db, user="dashboard_ro")
+    assert [tuple(r) for r in _rows(out) if r[0] == M_ONLY_LOCAL] == [(M_ONLY_LOCAL, "scoring.onnx", "local", "")]
 
 
 def test_targets_the_declared_columns_hold_on_a_project_with_targets(seeded, projects):

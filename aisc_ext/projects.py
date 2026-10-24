@@ -68,7 +68,10 @@ MEMBER_PROJECTS_SQL = "SELECT project_id, role FROM core.project_member WHERE su
 #: config.
 #: target_status: 'unassigned' (the run has no ``target`` input, as every evaluation made before
 #: targets), 'not a target' (its component is no mirror), 'stale' (a component the latest card no
-#: longer lists), else 'current'. target_label is never NULL, so no chart shows an empty label.
+#: longer lists), else 'current'. A run on a local model file (the engine worker stores
+#: {"local_model": {"file", "sha256"}} as the value of its model input) is 'local', whatever else it has, and
+#: its label is the file name: it is shown apart from the card's runs, never as one of them.
+#: target_label is never NULL, so no chart shows an empty label.
 #: The dimensions plugins write: each key a column of its own, so a
 #: chart can group by it. Text keys as they are; statistic and p_value are numbers sent as strings
 #: (the engine takes no floats in dimensions), cast back here, NULL when not a number ("nan").
@@ -83,10 +86,12 @@ SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
        e.pid AS evaluation_pid, e.created_at AS evaluated_at,
        s.pid AS system_version_pid, s.number AS system_version,
        t.key AS target_key, t.kind AS target_kind, t.component_kind AS target_component_kind,
-       CASE WHEN ti.id IS NULL THEN 'unassigned'
+       CASE WHEN li.id IS NOT NULL THEN COALESCE(li.value->'local_model'->>'file', 'local model')
+            WHEN ti.id IS NULL THEN 'unassigned'
             WHEN t.key IS NULL THEN tc.name::text
             ELSE t.label END AS target_label,
-       CASE WHEN ti.id IS NULL THEN 'unassigned'
+       CASE WHEN li.id IS NOT NULL THEN 'local'
+            WHEN ti.id IS NULL THEN 'unassigned'
             WHEN t.key IS NULL THEN 'not a target'
             WHEN t.kind = 'component'
                  AND t.last_card_number < (SELECT max(number) FROM project.system) THEN 'stale'
@@ -110,6 +115,8 @@ SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
   LEFT JOIN engine.aisc_backend_evaluationinput ti ON ti.evaluation_plugin_id = ep.id AND ti.name = 'target'
   LEFT JOIN engine.aisc_backend_aicomponent tc ON tc.id = ti.component_id
   LEFT JOIN target.target t ON t.engine_component = tc.pid
+  LEFT JOIN engine.aisc_backend_evaluationinput li
+         ON li.evaluation_plugin_id = ep.id AND li.value->'local_model' IS NOT NULL
 """
 _ENGINE_RESULTS_SQL = _ENGINE_RESULTS_SQL.replace("{dimensions}", ",\n       ".join(
     [f"m.dimensions->>'{key}' AS {key}" for key in DIMENSION_COLUMNS]
