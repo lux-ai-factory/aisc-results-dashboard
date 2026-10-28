@@ -15,7 +15,6 @@ and a chartId placeholder next to each chart's uuid in the layout.
 Pure Python: no Superset import, so it is tested without the app."""
 from __future__ import annotations
 
-import json
 import uuid
 
 import yaml
@@ -326,6 +325,3 @@ def starter_bundle(*, pid, plugin, label, dataset_uuid, dataset_name, database_u
         description=f"A starting point on this project's {label} results. Change it, then Save as a new chart.")
     return files
 
-
-def to_json(position: dict) -> str:
-    return json.dumps(position)

@@ -44,3 +44,9 @@ def test_a_viewer_comments_and_files_reviews_through_the_extension_grants():
     assert {"can_post", "can_delete"} <= set(grants["CommentApi"])
     assert {"can_post", "can_patch"} <= set(grants["ReviewRequestApi"])
     assert '_grant(sm, _EXTENSION_GRANTS, ("Admin", "Alpha", "Gamma", VIEWER_ROLE))' in src
+
+
+def test_charts_has_no_json_wrapper_nothing_calls():
+    from aisc_ext import charts
+
+    assert not hasattr(charts, "to_json")
