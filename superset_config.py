@@ -181,7 +181,7 @@ _EXTENSION_GRANTS = {
     "Review dashboards": ("menu_access",),
     # the top menu's "← Back", one level up to the project's AI Assessment Sandbox (aisc_ext/back.py)
     "Back": ("menu_access",),
-    "ReviewRequestApi": ("can_list", "can_post", "can_patch", "can_assignees"),
+    "ReviewRequestApi": ("can_list", "can_post", "can_patch"),
 }
 
 

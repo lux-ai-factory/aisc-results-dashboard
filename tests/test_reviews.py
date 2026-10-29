@@ -100,7 +100,7 @@ def test_the_api_checks_the_dashboard_on_every_route_and_keeps_csrf():
     assigned = {t.id: ast.literal_eval(n.value) for n in cls.body if isinstance(n, ast.Assign)
                 for t in n.targets if isinstance(t, ast.Name) and isinstance(n.value, ast.Constant)}
     assert assigned.get("csrf_exempt") is False
-    for fn in (n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in ("assignees", "list", "post", "patch")):
+    for fn in (n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name in ("list", "post", "patch")):
         text = ast.get_source_segment(src, fn)
         assert "open_dashboard(" in text or "self._dashboard(" in text or "visible(" in text, fn.name
 

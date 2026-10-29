@@ -53,22 +53,6 @@ class ReviewRequestApi(BaseApi):
             return None, self.response_403()
         return dashboard, None
 
-    @expose("/assignees", methods=["GET"])
-    @protect(allow_browser_login=True)
-    @safe
-    def assignees(self):
-        """Who a review of ?dashboard_id= can be assigned to: the people whose roles may open that
-        dashboard, and the stakeholder groups."""
-        from superset import db
-        from flask_appbuilder.security.sqla.models import User
-        dashboard, refused = self._dashboard(request.args.get("dashboard_id"))
-        if refused is not None:
-            return refused
-        roles = {r.name for r in getattr(dashboard, "roles", [])}
-        users = [{"sub": u.username, "name": u.get_full_name() or u.username}
-                 for u in db.session.query(User).all() if roles & {r.name for r in u.roles}]
-        return self.response(200, users=users, categories=STAKEHOLDER_GROUPS)
-
     @expose("/", methods=["GET"])
     @protect(allow_browser_login=True)
     @safe

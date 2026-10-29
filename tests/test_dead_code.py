@@ -61,3 +61,11 @@ def test_results_db_holds_only_the_membership_dsn():
             "_DATASETS")
     assert not [name for name in gone if hasattr(results_db, name)]
     assert "AISC Results" not in (REPO / "aisc_ext/results_db.py").read_text()
+
+
+def test_review_requests_have_no_assignees_route_or_grant():
+    src = (REPO / "aisc_ext/reviews/api.py").read_text()
+    cls = next(n for n in ast.parse(src).body if isinstance(n, ast.ClassDef) and n.name == "ReviewRequestApi")
+    assert "assignees" not in {n.name for n in cls.body if isinstance(n, ast.FunctionDef)}
+    assert '"/assignees"' not in src
+    assert "can_assignees" not in (REPO / "superset_config.py").read_text()
