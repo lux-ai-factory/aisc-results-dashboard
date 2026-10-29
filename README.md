@@ -1,16 +1,20 @@
 # AISC results dashboard
 
-The results dashboard is the Results of step 4 of the AI Assessment Sandbox Configurator
-(AISC), where the results of an assessment are analysed. AISC is a platform for assessing AI
-systems in four steps: 1 Qualify the AI system, 2 Set control objectives, 3 Choose tests and
-checklists, 4 Collect evidence. This repository is the dashboard: stock Apache Superset 4.1.4, customised only
-through Superset's configuration file and a small Python package (`aisc_ext`). For
-every AISC project it builds one dashboard per plugin of that project (a "tile"), from the
-plugin's default charts over the project's own results: the execution engine's scores by AI
-card version and by assessment target, and the answers to the controls. People in the project can read those charts, comment on them and ask each
-other for reviews. Superset's own views log to its action log (the `logs` table, Settings >
-Action Log); the `aisc_ext` routes do not, so comments and reviews (and chart imports) are recorded
-only as events in the project's ledger in the platform, when the ledger is on (`LEDGER_MODE`).
+The results dashboard draws the charts behind the Results of step 4 Collect evidence in AISC, the AI
+Assessment Sandbox Configurator (steps: 1 Qualify the AI system, 2 Set control objectives, 3 Choose tests and
+checklists, 4 Collect evidence). It runs as the compose service `dashboard` (with `dashboard-migrate` and its own
+cache `dashboard-redis`), on its own port, 8188 by default.
+
+It is stock Apache Superset 4.1.4, customised only through Superset's configuration file and a small Python
+package (`aisc_ext`). For every AISC project it builds one Superset dashboard per test plugin of that project (a
+"tile"), from the plugin's default charts over the project's own results: the engine's scores by AI card version
+and by what is assessed, and the answers to the checklists. A tile opens on one AI card version and leaves runs
+on a local model file out unless its Local filter is on. People in the project can read those charts, comment on
+them and ask each other for reviews; comments and reviews (review requests) reach the project's ledger through the
+platform.
+
+For the whole picture, see `docs/architecture.md` in the aisc repository; for the Results page that links to the
+tiles, `docs/appendices/4-collect-evidence.md`.
 
 ## How it works
 
@@ -50,14 +54,15 @@ only as events in the project's ledger in the platform, when the ledger is on (`
   tile in a browser.
 - **One dashboard per plugin of a project.** When the platform creates a project it calls the bridge
   (`POST /api/v1/aisc_project/<pid>`, header `X-AISC-Bridge-Token`). `aisc_ext/projects.py`
-  then creates, for that project: a connection `AISC Controls <hex>` (named by the pid, so a changed or reused slug never moves it;
-  one named by slug by older code is renamed at the next registration) to the project's own
+  then creates, for that project: a connection `AISC Controls <hex>` (named by the pid, so a changed or reused slug never moves it) to the project's own
   database `project_<pid hex>` as the read-only role `dashboard_ro`; the datasets
   `engine_results_<hex>` and `controls_answers_<hex>`; and a role `AiscProject_<hex>` that may
-  read only those. Registration makes no project dashboard (an `aisc-<hex>` one made by older code is
-  left as it is). Each plugin's dashboard, its tile, is
+  read only those. Registration makes no dashboard. Each plugin's dashboard, its tile, is
   made and updated by `PUT /api/v1/aisc_project/<pid>/plugins` (`aisc_ext/plugin_tiles.py`), as the
-  user `aisc-bridge`, and is visible only to the project's role (`DASHBOARD_RBAC`); that route
+  user `aisc-bridge`, and is visible only to the project's role (`DASHBOARD_RBAC`). A tile opens on the
+  AI card version the link came from and that version's latest run (its Version and Run filters; a Target
+  filter narrows it to what is assessed); runs on a local model file are left out unless its Local filter
+  is on. That route
   answers 404 only for a project the dashboard has not registered. A dashboard counts as a tile only
   when `aisc-bridge` created it and it carries its project's role: its metadata or slug alone, which
   any owner can write, binds it to no project. `DELETE /api/v1/aisc_project/<pid>` removes the
@@ -90,7 +95,9 @@ only as events in the project's ledger in the platform, when the ledger is on (`
   action, a chart that is not on the dashboard, a bad `?chart_id=`) answers 400. The raw
   *Comments* and *Review Requests* tables in the menu list every project's rows, so they are
   the Admin's only, and *Review Requests* is read-only (list and show).
-- **Ledger.** With `LEDGER_MODE` set to `record` or `enforce`, each comment and review
+- **Action log and ledger.** Superset's own views log to its action log (the `logs` table, Settings >
+  Action Log); the `aisc_ext` routes do not, so comments, review requests and chart imports are
+  recorded only in the project's ledger, through the platform. With `LEDGER_MODE` set to `record` or `enforce`, each comment and review
   change also queues an event in the table `aisc_ledger_outbox`, in the same transaction.
   The events are then posted, in order and off the request path (one pass at a time across
   Superset's workers, an advisory lock on Postgres), to the platform's internal route
@@ -104,9 +111,20 @@ only as events in the project's ledger in the platform, when the ledger is on (`
   is kept with that status and not sent again. A project whose events wait holds back only
   its own later events, not other projects'.
 
-## Install and run
+## Run it
 
 ### Inside the AISC stack (the usual way)
+
+From the aisc folder:
+
+```bash
+uv run scripts/aisc.py start
+```
+
+It makes the secrets if they are missing (among them `SUPERSET_SECRET_KEY`, `DASHBOARD_BRIDGE_TOKEN`,
+`DASHBOARD_REDIS_PASSWORD` and `PLATFORM_LEDGER_DASHBOARD_TOKEN`), builds and starts the stack, and keeps port
+443 answering on an https install. The dashboard is then at **http://localhost:8188**, and each test's tile opens
+from **Open charts** on the Results page.
 
 The dashboard is a submodule of the [aisc](https://github.com/lux-ai-factory/aisc) repo at
 `apps/results-dashboard` and is started with the rest of the stack. The image is built from
@@ -121,18 +139,8 @@ use it:
   and signs the user in from the gateway's verified token, so `AISC_OAUTH` is `0` there and
   there is no local admin account.
 
-From the aisc repo root, make the secrets once (this sets `SUPERSET_SECRET_KEY`,
-`DASHBOARD_BRIDGE_TOKEN`, `DASHBOARD_REDIS_PASSWORD` and `PLATFORM_LEDGER_DASHBOARD_TOKEN`,
-among others), then start the stack. The dashboard needs the aisc compose's own
-`dashboard-redis` service and `DASHBOARD_REDIS_*` settings: with an older aisc compose,
-which has neither, it refuses to start.
-
-```bash
-uv run scripts/aisc.py start
-```
-
-Run it from the aisc folder. It makes the secrets if they are missing, builds and starts the stack,
-and keeps port 443 answering on an https install.
+The dashboard needs the aisc compose's `dashboard-redis` service and `DASHBOARD_REDIS_*` settings: without
+them it refuses to start.
 
 The `superset` metadata database and the `dashboard_ro` role are created by the aisc
 repo's `init/` scripts on a fresh Postgres volume. Project dashboards appear when the
@@ -184,7 +192,9 @@ docker compose -f docker-compose.yml -f docker-compose.aisc.yml up -d
 Everyday commands: `docker compose logs -f superset`, `docker compose down` (the
 metadata volume is kept), `docker compose up -d`.
 
-## Configuration
+## Reference
+
+### Settings
 
 Environment variables read by `superset_config.py` and `aisc_ext`. "Stack" is the value
 the aisc repo's `docker-compose.development.yml` sets.
@@ -194,19 +204,19 @@ the aisc repo's `docker-compose.development.yml` sets.
 | `SUPERSET_SECRET_KEY` | Signs session cookies. Required: Superset refuses to start without it. | none |
 | `SUPERSET_GUEST_TOKEN_SECRET` | Signs guest tokens (embedding is on). Required, like the one above. | none |
 | `SUPERSET_DB_URI` | SQLAlchemy URI of Superset's metadata database. Required. | none (stack: `.../superset` on Postgres) |
-| `DASHBOARD_REDIS_HOST`, `DASHBOARD_REDIS_PORT` | The cache's Redis: the dashboard's own, never the stack's shared `redis` (Superset unpickles what it reads there). `REDIS_HOST` and `REDIS_PORT` are no longer read. | `dashboard-redis`, `6379` (standalone: `superset-redis`) |
+| `DASHBOARD_REDIS_HOST`, `DASHBOARD_REDIS_PORT` | The cache's Redis: the dashboard's own, never the stack's shared `redis` (Superset unpickles what it reads there). `REDIS_HOST` and `REDIS_PORT` are not read. | `dashboard-redis`, `6379` (standalone: `superset-redis`) |
 | `DASHBOARD_REDIS_PASSWORD` | That Redis's password. Required: the dashboard refuses to start without it. | none (standalone: made by `bootstrap.sh`) |
 | `LAUNCHER_URL` | Where the logo links to: the AISC launcher's project list. The menu's "← Back" (`/aisc/back/`) goes to `<LAUNCHER_URL>/evidence.html?project=<pid>` when the link that opened the dashboard named `?aisc_project=<pid>`, else to `LAUNCHER_URL`. | `http://localhost:8100/` |
 | `BRANDING_APP_NAME` | App name in the top bar. | `AI Assessment Sandbox` |
 | `BRANDING_LOGO` | Logo path as the browser requests it. | `/static/assets/branding/aisc/laif_logo.png` |
 | `BRANDING_PRIMARY`, `BRANDING_SECONDARY` | Theme colours (hex); darker and lighter shades are derived. | `#001075`, `#D7193B` |
 | `EMBED_ALLOWED_ORIGINS` | Comma-separated origins allowed to frame the dashboard. When set, the session cookie becomes `SameSite=None; Secure`, so HTTPS is needed. | empty (no framing) |
-| `AISC_MEMBERSHIP_DB_URI` | DSN of the `platform` database for memberships at sign-in. Must connect as `dashboard_ro`. Unset: nobody gets a project role. | unset (stack: `dashboard_ro` on `localhost:5432/platform`) |
-| `AISC_PROJECT_DB_HOSTPORT` | Host and port of the project databases, used in each project connection. | `postgres:5432` (stack: `localhost:5432`) |
+| `AISC_MEMBERSHIP_DB_URI` | DSN of the `platform` database for memberships at sign-in. Must connect as `dashboard_ro`. Unset: nobody gets a project role. | unset (stack: `dashboard_ro` on `postgres:5432/platform`) |
+| `AISC_PROJECT_DB_HOSTPORT` | Host and port of the project databases, used in each project connection. | `postgres:5432` (stack: same) |
 | `DASHBOARD_RO_PASSWORD` | Password of `dashboard_ro` in the project connections. Required: without it the bridge registers nothing (503). | none (stack: from `scripts/secrets.sh`) |
 | `DASHBOARD_BRIDGE_TOKEN` | Shared secret the platform sends to the bridge. Unset: the bridge refuses every call. | unset (stack: from `scripts/secrets.sh`) |
-| `LEDGER_MODE` | `off`, `record` or `enforce`. `record` and `enforce` queue ledger events; any other value is off. | `off` |
-| `PLATFORM_URL` | Base URL of the platform service, for ledger events. Unset: events stay queued. | unset (stack: `http://172.17.0.1:8000`) |
+| `LEDGER_MODE` | `off`, `record` or `enforce`. `record` and `enforce` queue ledger events; any other value is off. | `off` (stack: `record`) |
+| `PLATFORM_URL` | Base URL of the platform service, for ledger events. Unset: events stay queued. | unset (stack: `http://platform:8000`, or `DASHBOARD_PLATFORM_URL`) |
 | `PLATFORM_LEDGER_DASHBOARD_TOKEN` | Token for the platform's internal ledger route. Unset: events stay queued. | unset (stack: from `scripts/secrets.sh`) |
 | `AISC_OAUTH` | `1` turns on Superset's own Keycloak sign-in (standalone use). | off (stack: `0`) |
 | `OIDC_ISSUER` | Keycloak realm URL, with `AISC_OAUTH=1`. | `http://keycloak.localhost:8080/realms/dashboard` |
@@ -217,11 +227,22 @@ required), `AISC_NETWORK` (network of the aisc stack, default `aisc_backend`), a
 `ADMIN_USER`, `ADMIN_PASSWORD`, `ADMIN_EMAIL` for `bootstrap.sh`. In the stack, Superset's
 own entrypoint also reads `SUPERSET_BIND_ADDRESS` and `SUPERSET_PORT`.
 
+### Routes
+
+| route | what it does |
+|---|---|
+| `POST, DELETE /api/v1/aisc_project/<pid>` | the bridge: register or remove a project (header `X-AISC-Bridge-Token`) |
+| `PUT /api/v1/aisc_project/<pid>/plugins` | the bridge: make or update the project's tiles |
+| `/api/v1/aisc_comment`, `/api/v1/aisc_review_request` | comments and review requests (REST) |
+| `/aisc/review/` | Assessment > Review dashboards |
+| `/aisc/import/` | Assessment > Import charts |
+| `/aisc/back/` | the menu's "← Back" |
+
 ### Branding
 
 To rebrand for a company, put its logo in `branding/<company>/` (served at
 `/static/assets/branding/<company>/`), set the `BRANDING_*` variables and restart. No
-rebuild is needed. The top-bar background stays Superset's white: Superset 4.1.1 has no
+rebuild is needed. The top-bar background stays Superset's white: Superset 4.1 has no
 setting for it, and changing it would mean injecting CSS into Superset's pages. See
 [`branding/README.md`](branding/README.md).
 
@@ -289,10 +310,10 @@ aisc_ext/               the extension package (mounted next to it)
   import_view.py,       Assessment > Import charts: a chart export ZIP into a tile
   chart_import.py
   cache.py              Superset's cache config: the dashboard's own Redis, with a password
-  back.py, back_view.py the menu's "← Back" to the project's Sandbox
+  back.py, back_view.py the menu's "← Back" to the project's Collect evidence page
   security.py, sso.py,  role mapping, Keycloak sign-in, the AiscViewer role
   viewer_role.py
-  results_db.py         the membership DSN; removal of the old shared "AISC Results" connection
+  results_db.py         the membership DSN
   comments/, reviews/   models, rules, REST APIs and list pages for comments and review requests
   review/               the Review page (views, rules, Jinja templates)
   dashboards.py         the "may this user open this dashboard" check

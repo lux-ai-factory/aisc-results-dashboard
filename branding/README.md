@@ -1,21 +1,22 @@
 # Branding (white-label)
 
-The top-bar logo, app name and theme colours are runtime configuration: changing
-them needs no image rebuild. AISC is the default (`branding/aisc/`).
+This folder holds the logos of the results dashboard (`dashboard`, the Superset charts behind step 4's Results).
+The top-bar logo, app name and theme colours are runtime settings: changing them needs no image rebuild. AISC is
+the default (`branding/aisc/laif_logo.png`). The settings are read by `aisc_ext/branding.py`; the dashboard's
+[README](../README.md) lists them with their defaults.
 
 ## Add a company
 
-1. Create a folder and drop the logo:
+1. Create a folder and put the logo in it:
 
    ```
    branding/acme/logo.png
    ```
 
-   The whole `branding/` directory is mounted at
-   `/static/assets/branding/`, so that file is served at
+   The whole `branding/` folder is mounted at `/static/assets/branding/`, so that file is served at
    `/static/assets/branding/acme/logo.png`.
 
-2. Point `.env` at it (the browser-facing path):
+2. Set the variables (the logo as the browser requests it):
 
    ```env
    BRANDING_APP_NAME=Acme Assurance
@@ -24,11 +25,12 @@ them needs no image rebuild. AISC is the default (`branding/aisc/`).
    BRANDING_SECONDARY=#ff6600
    ```
 
-   `BRANDING_PRIMARY` is enough: the darker and lighter shades are derived
-   from it (`aisc_ext/branding.py`).
+   Standalone, they go in `.env`. In the AISC stack, `docker-compose.development.yml` passes `BRANDING_*` from
+   the environment Docker Compose runs with.
 
-3. Apply: `docker compose up -d` (standalone), or restart the `dashboard`
-   container in the AISC stack, which passes the `BRANDING_*` variables from the
-   environment docker compose runs with.
+   `BRANDING_PRIMARY` is enough: the darker and lighter shades are derived from it.
 
-Leave the `BRANDING_*` vars blank to fall back to the default AISC identity.
+3. Apply: `docker compose up -d` (standalone), or restart the `dashboard` container in the AISC stack.
+
+A `BRANDING_*` variable left unset or blank falls back to the AISC default. The top-bar background stays
+Superset's white: Superset 4.1 has no setting for it.
