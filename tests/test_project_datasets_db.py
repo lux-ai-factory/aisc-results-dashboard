@@ -587,6 +587,30 @@ def test_targets_the_declared_columns_hold_on_a_project_with_targets(seeded, pro
     assert [n for n, _ in got] == [n for n, _ in projects.ENGINE_RESULTS_COLUMNS]
 
 
+def test_a_local_run_is_marked_in_local_run_and_a_card_run_is_not(seeded, projects):
+    seeded.need("targets")
+    out = psql(f"SELECT pid, target_status, local_run FROM ({projects.engine_results_sql()}) t;",
+               db=seeded.r_db, user="dashboard_ro")
+    for pid, status, local in _rows(out):
+        assert local == ("yes" if status == "local" else "no"), pid
+
+
+def _latest_runs(projects, db, tool):
+    sql = projects.latest_runs_sql().replace(":label", f"'{tool}'")
+    return [(version, local, run.split(" · ")[0]) for version, local, run, _order in
+            _rows(psql(sql, db=db, user="dashboard_ro"))]
+
+
+def test_the_latest_runs_are_one_per_version_and_per_local_or_card(seeded, projects):
+    """R's plugin runs all name the tool '' (the seed's plugins have an empty display name): card runs and
+    local runs on v2, the latest of each being Run 9 and Run 8. Its base run, on v1, has no plugin ('unknown')."""
+    seeded.need("targets", "local")
+    assert _latest_runs(projects, seeded.r_db, "") == [("2", "no", "Run 9"), ("2", "yes", "Run 8")]
+    assert _latest_runs(projects, seeded.r_db, "unknown") == [("1", "no", "Run 1")]
+    assert _latest_runs(projects, seeded.r_db, "another plugin") == []
+    assert [r[:2] for r in _latest_runs(projects, seeded.local_db, "")] == [("", "yes")]
+
+
 # ── Two runs with the plugins' dimensions, for real ──────────────────────────
 
 def test_runs_are_numbered_and_named_and_dimensions_become_columns(seeded, projects):

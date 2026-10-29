@@ -253,33 +253,52 @@ def layout(*, label, version, placed, starter_chart_id, user_part, has_run=False
     return pos
 
 
-def native_filters(dataset_uuid: str, latest_run: str | None = None) -> list[dict]:
-    """Run (the latest preselected, several to compare) and Target, on every plugin dashboard.
+#: The ids of the filters a link may set, in Superset's native_filters URL form: the platform's link to a tile
+#: sets the Target and the Version (the AI card version it came from) by them.
+TARGET_FILTER = "NATIVE_FILTER-target"
+VERSION_FILTER = "NATIVE_FILTER-version"
+#: The Local filter's value that leaves runs on a local model file out (the dataset's local_run column).
+NOT_LOCAL = "no"
+
+
+def native_filters(dataset_uuid: str, default_version: int | None = None, default_runs=()) -> list[dict]:
+    """Version, Run (several to compare), Target and Local, on every plugin dashboard.
+
+    A tile opens on one AI card version: the Version filter's default is the one the sync chose (the latest),
+    and a link that names a version sets it instead. The Run filter's default is the latest run of every
+    version, so with the Version filter it leaves that version's latest run. The Local filter's default
+    leaves runs on a local model file out; with it on, the version's latest local run shows too.
 
     Superset 4.1.1 selects a "first value by default" without applying it, so the charts would show every run
-    until someone pressed Apply. The latest run is therefore written as the filter's
-    default value, which Superset applies on load; each sync brings the latest run, so it stays current. Before
-    any run there is none to name, and the first value is preselected instead."""
-    def select(fid, name, column, **control):
-        return {"id": fid, "name": name, "filterType": "filter_select", "type": "NATIVE_FILTER",
-                "targets": [{"datasetUuid": dataset_uuid, "column": {"name": column}}],
-                "controlValues": {"multiSelect": True, "enableEmptyFilter": False, "inverseSelection": False,
-                                  "searchAllOptions": False, **control},
-                "defaultDataMask": {"filterState": {}, "extraFormData": {}, "ownState": {}},
-                "cascadeParentIds": [], "scope": {"rootPath": ["ROOT_ID"], "excluded": []}}
-    run = select("NATIVE_FILTER-run", "Run", "run", defaultToFirstItem=latest_run is None, sortAscending=False)
+    until someone pressed Apply. The defaults are therefore written as the filters' default values, which
+    Superset applies on load; each sync brings the latest runs, so they stay current. Before any run there is
+    none to name, and the Run filter's first value is preselected instead."""
+    def select(fid, name, column, default=None, **control):
+        f = {"id": fid, "name": name, "filterType": "filter_select", "type": "NATIVE_FILTER",
+             "targets": [{"datasetUuid": dataset_uuid, "column": {"name": column}}],
+             "controlValues": {"multiSelect": True, "enableEmptyFilter": False, "inverseSelection": False,
+                               "searchAllOptions": False, "defaultToFirstItem": False, **control},
+             "defaultDataMask": {"filterState": {}, "extraFormData": {}, "ownState": {}},
+             "cascadeParentIds": [], "scope": {"rootPath": ["ROOT_ID"], "excluded": []}}
+        if default:
+            f["defaultDataMask"] = {"filterState": {"value": list(default)},
+                                    "extraFormData": {"filters": [{"col": column, "op": "IN", "val": list(default)}]},
+                                    "ownState": {}}
+        return f
+    version = select(VERSION_FILTER, "Version", "system_version",
+                     [default_version] if default_version is not None else None, sortAscending=False)
+    run = select("NATIVE_FILTER-run", "Run", "run", default_runs, defaultToFirstItem=not default_runs,
+                 sortAscending=False)
     run["sortMetric"] = LATEST_RUN_METRIC
-    if latest_run is not None:
-        run["defaultDataMask"] = {"filterState": {"value": [latest_run]},
-                                  "extraFormData": {"filters": [{"col": "run", "op": "IN", "val": [latest_run]}]},
-                                  "ownState": {}}
-    return [run, select("NATIVE_FILTER-target", "Target", "target_label")]
+    return [version, run, select(TARGET_FILTER, "Target", "target_label"),
+            select("NATIVE_FILTER-local", "Local", "local_run", [NOT_LOCAL])]
 
 
 def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset_uuid, dataset_name,
            database_uuid, database_name, sqlalchemy_uri, columns, starter_chart_id, user_part=None,
-           latest_run=None) -> dict:
-    """The export bundle of one plugin's dashboard in one project: {path in the ZIP: YAML text}."""
+           default_version=None, default_runs=()) -> dict:
+    """The export bundle of one plugin's dashboard in one project: {path in the ZIP: YAML text}. The tile opens
+    on default_version and default_runs (native_filters); no default run means the plugin has not run yet."""
     files = {"metadata.yaml": _dump({"version": _VERSION, "type": "Dashboard", "timestamp": _TIMESTAMP})}
     files.update(_source_files(dataset_uuid=dataset_uuid, dataset_name=dataset_name, database_uuid=database_uuid,
                                database_name=database_name, sqlalchemy_uri=sqlalchemy_uri, columns=columns))
@@ -297,10 +316,11 @@ def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset
         "slug": plugin_slug(pid, plugin), "certified_by": None, "certification_details": None, "published": True,
         "uuid": dashboard_uuid(pid, plugin), "version": _VERSION,
         "position": layout(label=label, version=version, placed=placed,
-                           starter_chart_id=starter_chart_id if placed or latest_run is not None else None,
+                           starter_chart_id=starter_chart_id if placed or default_runs else None,
                            user_part=user_part,
-                           has_run=latest_run is not None),
-        "metadata": {"native_filter_configuration": native_filters(dataset_uuid, latest_run), "color_scheme": "",
+                           has_run=bool(default_runs)),
+        "metadata": {"native_filter_configuration": native_filters(dataset_uuid, default_version, default_runs),
+                     "color_scheme": "",
                      "aisc_project": pid, "aisc_plugin": plugin, "aisc_version": version,
                      "aisc_charts": [cid for cid, _, _ in placed]}})
     return files

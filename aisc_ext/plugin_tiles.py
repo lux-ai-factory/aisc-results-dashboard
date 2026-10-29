@@ -7,8 +7,8 @@ MetricVisualization list, read by the platform from the engine), through Superse
 people put under "Your charts":
 
 1. the starter chart (off the dashboard; "+ Build a chart of your own" opens it), once the plugin has a run;
-2. the dashboard: the defaults, then "Your charts" with the layout people made there, the Run filter's default
-   set to the latest run (read from the project's own results);
+2. the dashboard: the defaults, then "Your charts" with the layout people made there, opening on the latest
+   AI card version and its latest run (opening, read from the project's own results);
 3. every chart of the layout linked to the dashboard by the bridge itself: Superset's import stops linking at
    the first chart of the layout that is not in the bundle, and it walks them in no fixed order;
 4. defaults a new plugin version dropped are deleted; people's charts never are;
@@ -111,6 +111,20 @@ def user_part(position: dict | None, linked: list[dict]) -> dict:
     return out
 
 
+def opening(latest_runs: list[dict]) -> tuple[int | None, list[str]]:
+    """(the Version filter's default, the Run filter's default) from the plugin's latest run of each AI card
+    version, on the card and on a local model file apart (store.latest_runs).
+
+    The version is the latest one with a run on the card: local runs are left out by default, so a newer
+    version run only on a local model file would open on nothing. With no card run it is the latest version of
+    the local runs; None when no run names a version. The runs are all of them, newest first: the Version
+    filter (the default, or the one a link names) and the Local filter narrow them to that version's latest."""
+    card = [r for r in latest_runs if not r["local"]]
+    versions = [r["version"] for r in (card or latest_runs) if r["version"] is not None]
+    runs = [r["run"] for r in sorted(latest_runs, key=lambda r: r["run_order"], reverse=True)]
+    return (max(versions) if versions else None), list(dict.fromkeys(runs))
+
+
 def sync_plugin(pid, project_name: str, plugin: str, label: str, version: str, visualizations: list[dict], *,
                 store, importer) -> dict:
     """Make or update the plugin's dashboard in the project. Idempotent: a second sync with the same input
@@ -133,10 +147,10 @@ def _sync(pid, project_name, plugin, label, version, visualizations, *, store, i
         source = store.source(pid)
     common = dict(pid=pid, plugin=plugin, label=label, **source)
     slug = charts.plugin_slug(pid, plugin)
-    latest_run = store.latest_run(pid, label)
+    default_version, default_runs = opening(store.latest_runs(pid, label))
 
     starter_id = None
-    if latest_run is not None or visualizations:
+    if default_runs or visualizations:
         importer.import_charts(charts.starter_bundle(**common))
         starter_id = store.chart_id(charts.starter_uuid(pid, plugin))
 
@@ -146,7 +160,7 @@ def _sync(pid, project_name, plugin, label, version, visualizations, *, store, i
 
     files = charts.bundle(project_name=project_name or pid, version=version, visualizations=visualizations,
                           starter_chart_id=starter_id, user_part=kept,
-                          latest_run=latest_run, **common)
+                          default_version=default_version, default_runs=default_runs, **common)
     importer.import_dashboard(files)
 
     defaults = [charts.chart_uuid(pid, plugin, i, v.get("title") or "") for i, v in enumerate(visualizations)]

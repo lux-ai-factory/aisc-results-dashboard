@@ -72,6 +72,7 @@ MEMBER_PROJECTS_SQL = "SELECT project_id, role FROM core.project_member WHERE su
 #: {"local_model": {"file", "sha256"}} as the value of its model input; a local_model that is no object marks
 #: nothing, as the engine refuses markers a client writes) is 'local', whatever else it has, and
 #: its label is the file name (the first by name when several inputs are marked): it is shown apart from the card's runs, never as one of them.
+#: local_run says the same in a column of its own ('yes' or 'no'), for a tile's Local filter.
 #: target_label is never NULL, so no chart shows an empty label.
 #: The dimensions plugins write: each key a column of its own, so a
 #: chart can group by it. Text keys as they are; statistic and p_value are numbers sent as strings
@@ -102,6 +103,7 @@ SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
        'Run ' || dense_rank() OVER (ORDER BY e.created_at, e.id) || ' · ' ||
            to_char(e.created_at, 'DD Mon YYYY, HH24:MI') AS run,
        dense_rank() OVER (ORDER BY e.created_at, e.id) AS run_order,
+       CASE WHEN lm.file IS NOT NULL THEN 'yes' ELSE 'no' END AS local_run,
        {dimensions}
   FROM engine.aisc_backend_measurement m
   JOIN engine.aisc_backend_observation o ON o.id = m.observation_id
@@ -160,7 +162,7 @@ ENGINE_RESULTS_COLUMNS = (
     ("evaluated_at", "DATETIMETZ"), ("system_version_pid", "STRING"), ("system_version", "INTEGER"),
     ("target_key", "STRING"), ("target_kind", "STRING"), ("target_component_kind", "STRING"),
     ("target_label", "STRING"), ("target_status", "STRING"), ("tool", "STRING"),
-    ("run", "STRING"), ("run_order", "INTEGER"),
+    ("run", "STRING"), ("run_order", "INTEGER"), ("local_run", "STRING"),
 ) + tuple((key, "STRING") for key in DIMENSION_COLUMNS) + tuple((key, "FLOAT") for key in NUMERIC_DIMENSION_COLUMNS)
 CONTROLS_ANSWERS_COLUMNS = (
     ("title", "STRING"), ("text", "STRING"), ("article", "STRING"), ("category", "STRING"),
@@ -198,6 +200,14 @@ def engine_results_sql() -> str:
     at, with the card version. Takes no pid: each project database holds exactly
     one project's engine rows."""
     return _ENGINE_RESULTS_SQL
+
+
+def latest_runs_sql() -> str:
+    """The latest run of one plugin (bound as :label, its tool) for each AI card version, on the card and on a
+    local model file apart: what a tile opens on (aisc_ext/plugin_tiles.py)."""
+    return ("SELECT DISTINCT ON (system_version, local_run) system_version, local_run, run, run_order "
+            f"FROM ({engine_results_sql()}) t "
+            "WHERE tool = :label ORDER BY system_version, local_run, run_order DESC")
 
 
 def controls_answers_sql() -> str:
@@ -615,18 +625,19 @@ class SupersetStore:
                     conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": key})
         return held()
 
-    def latest_run(self, pid, label):
-        """The plugin's latest run in the project, named as the dataset names it; None before any run."""
+    def latest_runs(self, pid, label):
+        """The plugin's latest run of each AI card version, on the card and on a local model file apart:
+        [{"version", "local", "run", "run_order"}], named as the dataset names them; [] before any run."""
         from sqlalchemy import text  # type: ignore
         from superset.connectors.sqla.models import SqlaTable  # type: ignore
 
         dataset = self._db().session.query(SqlaTable).filter_by(table_name=f"engine_results_{_hex(pid)}").one_or_none()
         if dataset is None:
-            return None
-        query = text(f"SELECT run FROM ({engine_results_sql()}) t WHERE tool = :label ORDER BY run_order DESC LIMIT 1")
+            return []
         with dataset.database.get_sqla_engine() as engine, engine.connect() as conn:
-            row = conn.execute(query, {"label": label}).first()
-        return row[0] if row else None
+            rows = conn.execute(text(latest_runs_sql()), {"label": label}).all()
+        return [{"version": version, "local": local == "yes", "run": run, "run_order": order}
+                for version, local, run, order in rows]
 
     def chart_id(self, chart_uuid):
         from superset.models.slice import Slice  # type: ignore

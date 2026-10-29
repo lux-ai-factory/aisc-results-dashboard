@@ -32,8 +32,8 @@ def test_both_datasets_are_registered_with_their_declared_columns(projects):
     assert _declared(store, ENGINE) == ["pid", "score", "unit", "time", "dimensions", "metric", "evaluation_pid",
                                         "evaluated_at", "system_version_pid", "system_version", "target_key",
                                         "target_kind", "target_component_kind", "target_label", "target_status",
-                                        "tool", "run", "run_order", "feature", "concern", "flag", "language",
-                                        "input_type", "reflection_type", "model", "prompt", "response",
+                                        "tool", "run", "run_order", "local_run", "feature", "concern", "flag",
+                                        "language", "input_type", "reflection_type", "model", "prompt", "response",
                                         "expected", "statistic", "p_value"]
     assert _declared(store, CONTROLS) == ["title", "text", "article", "category", "question_order", "answer",
                                           "score", "system_version_number", "answered_at", "label",
@@ -49,7 +49,8 @@ def test_the_types_are_the_ones_superset_itself_infers():
         "target_kind": "STRING", "target_component_kind": "STRING", "target_label": "STRING",
         "target_status": "STRING", "tool": "STRING",   # tool: for the results navigation
         # Plugin dashboards: the run as people name it, and the plugins' dimensions
-        "run": "STRING", "run_order": "INTEGER", "feature": "STRING", "concern": "STRING", "flag": "STRING",
+        "run": "STRING", "run_order": "INTEGER", "local_run": "STRING", "feature": "STRING", "concern": "STRING",
+        "flag": "STRING",
         "language": "STRING", "input_type": "STRING", "reflection_type": "STRING", "model": "STRING",
         # LangBiTe's failed cases
         "prompt": "STRING", "response": "STRING", "expected": "STRING",
@@ -225,6 +226,20 @@ def test_the_run_is_numbered_in_order_of_the_evaluations_and_named_with_its_time
     assert ("'Run ' || dense_rank() OVER (ORDER BY e.created_at, e.id) || ' · ' || "
             "to_char(e.created_at, 'DD Mon YYYY, HH24:MI') AS run") in sql
     assert " WHERE " not in sql.split("FROM", 1)[1]          # test_s11_4: the database is the project
+
+
+def test_a_run_on_a_local_model_file_says_so_in_its_own_column():
+    """The tile's Local filter reads local_run: 'yes' for a run whose target_status is 'local', else 'no'."""
+    p = importlib.import_module("aisc_ext.projects")
+    sql = " ".join(p.engine_results_sql().split())
+    assert "CASE WHEN lm.file IS NOT NULL THEN 'yes' ELSE 'no' END AS local_run" in sql
+
+
+def test_the_latest_runs_are_read_per_version_and_per_local_or_card():
+    p = importlib.import_module("aisc_ext.projects")
+    sql = " ".join(p.latest_runs_sql().split())
+    assert sql.startswith("SELECT DISTINCT ON (system_version, local_run) system_version, local_run, run, run_order")
+    assert "WHERE tool = :label ORDER BY system_version, local_run, run_order DESC" in sql
 
 
 def test_each_dimension_column_reads_its_key_and_the_numbers_are_cast():

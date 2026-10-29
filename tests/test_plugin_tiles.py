@@ -17,6 +17,7 @@ import yaml
 PID = "1e722ea2-4ce3-47fa-81bf-11a6b53ad679"
 HEX = PID.replace("-", "")
 PLUGIN = "data-monitor::DataDriftPlugin"
+RUN_2, RUN_4, RUN_5 = "Run 2 · 04 Oct 2026, 20:39", "Run 4 · 05 Oct 2026, 09:12", "Run 5 · 05 Oct 2026, 10:03"
 COLUMNS = ["score", "metric", "tool", "run", "run_order", "feature", "target_label"]
 V1 = [{"chart_type": "bars", "metrics": ["Drift Score"], "title": "Drift Score"},
       {"chart_type": "bars", "metrics": ["psi"], "title": "PSI per feature", "group_by_dimensions": ["feature"]}]
@@ -43,7 +44,10 @@ class Superset:
         self.dashboards = {}        # slug -> {"position", "slices": set(chart ids), "roles", "metadata"}
         self.next_id = 100
         self.imports = []
-        self.latest = "Run 2 · 04 Oct 2026, 20:39"
+        # the latest run of each AI card version, on the card or on a local model file (store.latest_runs)
+        self.runs = [dict(version=2, local=False, run=RUN_4, run_order=4),
+                     dict(version=1, local=False, run=RUN_2, run_order=2),
+                     dict(version=2, local=True, run=RUN_5, run_order=5)]
         self.with_project = with_project
         from aisc_ext.projects import ENGINE_RESULTS_COLUMNS, engine_results_sql
         self.dataset = {"sql": engine_results_sql(), "columns": [c[0] for c in ENGINE_RESULTS_COLUMNS]}
@@ -79,8 +83,8 @@ class Superset:
                 self.events.append("unlock")
         return held()
 
-    def latest_run(self, pid, label):
-        return self.latest
+    def latest_runs(self, pid, label):
+        return [dict(r) for r in self.runs]
 
     def chart_id(self, chart_uuid):
         c = self.charts.get(chart_uuid)
@@ -182,13 +186,14 @@ def test_a_sync_makes_the_plugins_dashboard_its_starter_and_its_defaults(tiles, 
     assert charts.starter_uuid(PID, PLUGIN) not in placed                 # the starter stays off the dashboard
     assert s.dashboards[slug]["roles"] == [f"AiscProject_{HEX}"]
     assert s.dashboards[slug]["title"] == "mcas · Data Drift"
-    run = next(f for f in s.dashboards[slug]["metadata"]["native_filter_configuration"] if f["name"] == "Run")
-    assert run["defaultDataMask"]["filterState"]["value"] == [s.latest]
+    nf = {f["name"]: f for f in s.dashboards[slug]["metadata"]["native_filter_configuration"]}
+    assert nf["Version"]["defaultDataMask"]["filterState"]["value"] == [2]
+    assert nf["Run"]["defaultDataMask"]["filterState"]["value"] == [RUN_5, RUN_4, RUN_2]
 
 
 def test_before_any_run_the_tile_says_to_run_the_test(tiles, charts):
     s = Superset()
-    s.latest = None
+    s.runs = []
     out = sync(tiles, s, visualizations=[])
     slug = charts.plugin_slug(PID, PLUGIN)
     assert out == {"slug": slug, "charts": 0} and [k for k, _ in s.imports] == ["dashboard"]
@@ -436,3 +441,30 @@ def test_only_an_unregistered_project_is_a_404_of_the_bridge(tiles):
     route = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef) and n.name == "sync_plugin_tile")
     handlers = [ast.unparse(h.type) for h in ast.walk(route) if isinstance(h, ast.ExceptHandler) and h.type]
     assert "ProjectNotRegistered" in handlers and "LookupError" not in handlers
+
+
+# ── What the tile opens on ───────────────────────────────────────────────────
+
+def opening(tiles, runs):
+    return tiles.opening([dict(version=v, local=loc, run=f"Run {o}", run_order=o) for v, loc, o in runs])
+
+
+def test_the_tile_opens_on_the_latest_version_with_a_run_on_the_card(tiles):
+    """A local run on a newer version does not choose the version: local runs are left out by default."""
+    assert opening(tiles, [(1, False, 2), (2, False, 4), (3, True, 6)]) == (2, ["Run 6", "Run 4", "Run 2"])
+
+
+def test_the_run_filter_holds_the_latest_run_of_each_version(tiles):
+    """Whichever version the link names, the Version filter and the Run filter together leave that version's
+    latest run, and its latest local run once the Local filter is on."""
+    version, runs = opening(tiles, [(1, False, 2), (1, True, 3), (2, False, 4)])
+    assert version == 2 and runs == ["Run 4", "Run 3", "Run 2"]
+
+
+def test_with_only_local_runs_the_latest_of_their_versions_is_chosen(tiles):
+    assert opening(tiles, [(1, True, 1), (2, True, 3)]) == (2, ["Run 3", "Run 1"])
+
+
+def test_runs_stamped_with_no_version_choose_none(tiles):
+    assert opening(tiles, [(None, False, 1)]) == (None, ["Run 1"])
+    assert opening(tiles, []) == (None, [])

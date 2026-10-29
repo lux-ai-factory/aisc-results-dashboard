@@ -164,12 +164,17 @@ def test_an_undeclared_dimension_is_dropped_and_said(charts):
 
 # ── The bundle ───────────────────────────────────────────────────────────────
 
-def make_bundle(charts, visualizations=DRIFT, user_part=None, latest_run="Run 2 · 04 Oct 2026, 20:39"):
+LATEST = "Run 4 · 05 Oct 2026, 09:12"
+LATEST_OF_V1 = "Run 2 · 04 Oct 2026, 20:39"
+
+
+def make_bundle(charts, visualizations=DRIFT, user_part=None, default_version=2, default_runs=(LATEST, LATEST_OF_V1)):
     return charts.bundle(pid=PID, project_name="mcas", plugin="data-monitor::DataDriftPlugin", label="Data Drift",
                          version="0.4.1", visualizations=visualizations, dataset_uuid=DATASET_UUID,
                          dataset_name="engine_results_x", database_uuid=DATABASE_UUID, database_name="AISC mcas",
                          sqlalchemy_uri="postgresql+psycopg2://dashboard_ro:XXXXXXXXXX@postgres:5432/project_x",
-                         columns=COLUMNS, starter_chart_id=42, user_part=user_part, latest_run=latest_run)
+                         columns=COLUMNS, starter_chart_id=42, user_part=user_part,
+                         default_version=default_version, default_runs=default_runs)
 
 
 def test_the_bundle_holds_what_the_import_needs(charts):
@@ -238,7 +243,8 @@ def test_a_table_takes_a_full_row_below_and_a_lone_chart_the_full_width(charts):
 
 
 def test_with_no_results_yet_the_tile_says_to_run_the_test(charts):
-    dash = yaml.safe_load(next(v for k, v in make_bundle(charts, visualizations=[], latest_run=None).items()
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts, visualizations=[], default_version=None,
+                                                         default_runs=()).items()
                                if k.startswith("dashboards/")))
     md = [v for v in dash["position"].values() if isinstance(v, dict) and v.get("type") == "MARKDOWN"]
     assert any("No results yet" in m["meta"]["code"] and "Data Drift" in m["meta"]["code"] for m in md)
@@ -267,9 +273,10 @@ def test_the_users_part_of_the_layout_is_kept_after_your_charts(charts):
     assert pos["CHART-mine"]["parents"] == ["ROOT_ID", "GRID_ID"]
 
 
-def test_the_run_and_target_filters(charts):
+def test_the_version_run_target_and_local_filters(charts):
     dash = yaml.safe_load(next(v for k, v in make_bundle(charts).items() if k.startswith("dashboards/")))
     nf = {f["name"]: f for f in dash["metadata"]["native_filter_configuration"]}
+    assert list(nf) == ["Version", "Run", "Target", "Local"]
     run, target = nf["Run"], nf["Target"]
     assert run["targets"] == [{"datasetUuid": DATASET_UUID, "column": {"name": "run"}}]
     assert run["controlValues"]["multiSelect"] and run["controlValues"]["sortAscending"] is False
@@ -277,9 +284,9 @@ def test_the_run_and_target_filters(charts):
     # Superset 4.1.1 selects a "first value by default" without applying it: the latest
     # run is written as the filter's default instead, which it applies on load
     assert run["controlValues"]["defaultToFirstItem"] is False
-    assert run["defaultDataMask"]["filterState"]["value"] == ["Run 2 · 04 Oct 2026, 20:39"]
+    assert run["defaultDataMask"]["filterState"]["value"] == [LATEST, LATEST_OF_V1]
     assert run["defaultDataMask"]["extraFormData"]["filters"] == [
-        {"col": "run", "op": "IN", "val": ["Run 2 · 04 Oct 2026, 20:39"]}]
+        {"col": "run", "op": "IN", "val": [LATEST, LATEST_OF_V1]}]
     assert target["targets"][0]["column"]["name"] == "target_label"
     assert dash["metadata"]["aisc_plugin"] == "data-monitor::DataDriftPlugin" and dash["metadata"]["aisc_project"] == PID
 
@@ -300,6 +307,37 @@ def test_the_starter_chart_bundle(charts):
 
 
 def test_before_any_run_the_run_filter_falls_back_to_the_first_value(charts):
-    dash = yaml.safe_load(next(v for k, v in make_bundle(charts, latest_run=None).items() if k.startswith("dashboards/")))
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts, default_version=None, default_runs=()).items()
+                               if k.startswith("dashboards/")))
     run = next(f for f in dash["metadata"]["native_filter_configuration"] if f["name"] == "Run")
     assert run["controlValues"]["defaultToFirstItem"] is True and run["defaultDataMask"]["filterState"] == {}
+
+
+def test_the_tile_opens_on_one_ai_card_version(charts):
+    """The Version filter has a fixed id, so the platform's link sets it the way it sets the Target filter
+    (Superset's native_filters); without one in the link, the default is the version the sync chose."""
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts).items() if k.startswith("dashboards/")))
+    version = next(f for f in dash["metadata"]["native_filter_configuration"] if f["name"] == "Version")
+    assert version["id"] == charts.VERSION_FILTER == "NATIVE_FILTER-version"
+    assert version["targets"] == [{"datasetUuid": DATASET_UUID, "column": {"name": "system_version"}}]
+    assert version["controlValues"]["sortAscending"] is False
+    assert version["controlValues"]["defaultToFirstItem"] is False
+    assert version["defaultDataMask"]["filterState"]["value"] == [2]
+    assert version["defaultDataMask"]["extraFormData"]["filters"] == [
+        {"col": "system_version", "op": "IN", "val": [2]}]
+
+
+def test_runs_on_a_local_model_file_are_left_out_until_the_local_filter_is_on(charts):
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts).items() if k.startswith("dashboards/")))
+    local = next(f for f in dash["metadata"]["native_filter_configuration"] if f["name"] == "Local")
+    assert local["id"] == "NATIVE_FILTER-local"
+    assert local["targets"] == [{"datasetUuid": DATASET_UUID, "column": {"name": "local_run"}}]
+    assert local["defaultDataMask"]["filterState"]["value"] == ["no"]
+    assert local["defaultDataMask"]["extraFormData"]["filters"] == [{"col": "local_run", "op": "IN", "val": ["no"]}]
+
+
+def test_before_any_run_no_version_is_chosen(charts):
+    dash = yaml.safe_load(next(v for k, v in make_bundle(charts, default_version=None, default_runs=()).items()
+                               if k.startswith("dashboards/")))
+    version = next(f for f in dash["metadata"]["native_filter_configuration"] if f["name"] == "Version")
+    assert version["defaultDataMask"]["filterState"] == {}
