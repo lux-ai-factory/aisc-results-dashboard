@@ -4,7 +4,9 @@
 - VIEWER_WRITABLE_VIEWS and ensure_viewer_role(extra_writable_views=...) named view menus no view checks
   ("AiscComment", "AiscReview", "AiscReviewRequest"): each start made can_read/can_write on them for nothing,
   while a viewer's real comment and review grants are _EXTENSION_GRANTS in superset_config.py;
-- the comments table had add and edit column lists that its read-only permissions never reach."""
+- the comments table had add and edit column lists that its read-only permissions never reach;
+- remove_results_connection deleted the old shared "AISC Results" connection, and nothing called it;
+- the review requests' "assignees" route, and its grant, served a picker no page has."""
 import ast
 import inspect
 from pathlib import Path
@@ -50,3 +52,12 @@ def test_charts_has_no_json_wrapper_nothing_calls():
     from aisc_ext import charts
 
     assert not hasattr(charts, "to_json")
+
+
+def test_results_db_holds_only_the_membership_dsn():
+    from aisc_ext import results_db
+
+    gone = ("remove_results_connection", "_remove", "_delete_order", "_SqlMetadata", "RESULTS_DB_NAME", "_DBS",
+            "_DATASETS")
+    assert not [name for name in gone if hasattr(results_db, name)]
+    assert "AISC Results" not in (REPO / "aisc_ext/results_db.py").read_text()
