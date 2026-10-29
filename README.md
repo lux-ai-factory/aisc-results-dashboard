@@ -157,7 +157,7 @@ Prerequisites: Docker with Compose v2; Python 3.10 or newer and
 [uv](https://docs.astral.sh/uv/) for the tests.
 
 ```bash
-git clone --branch feat/unified-modules https://github.com/lux-ai-factory/aisc-results-dashboard.git
+git clone --branch pilot https://github.com/lux-ai-factory/aisc-results-dashboard.git
 cd aisc-results-dashboard
 ./scripts/bootstrap.sh   # makes .env from .env.example, with every empty secret generated
 ```
@@ -308,7 +308,7 @@ DECISIONS.md            why the design is the way it is
 
 ## Contributing
 
-- `feat/unified-modules` is the only branch to work on; the aisc repo pins this submodule on
+- `pilot` is the only branch to work on; the aisc repo pins this submodule on
   it.
 - There are no migrations of its own. The tables `aisc_comment`, `aisc_review_request` and
   `aisc_ledger_outbox` are created in Superset's metadata database at startup if missing
