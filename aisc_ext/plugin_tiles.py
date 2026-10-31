@@ -155,6 +155,8 @@ def _sync(pid, project_name, plugin, label, version, visualizations, *, store, i
         starter_id = store.chart_id(charts.starter_uuid(pid, plugin))
 
     state = store.dashboard_state(slug)
+    if state is None and (older := charts.older_plugin_slug(pid, plugin)) != slug:
+        state = store.dashboard_state(older)      # the import finds it by uuid and gives it the new slug
     kept = user_part(state["position"], state["charts"]) if state else {}
     previous_defaults = {c["uuid"] for c in state["charts"] if c["aisc"]} if state else set()
 

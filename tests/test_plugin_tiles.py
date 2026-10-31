@@ -139,8 +139,11 @@ class Superset:
         for node in pos.values():
             if isinstance(node, dict) and node.get("type") == "CHART" and node["meta"]["uuid"] in written:
                 node["meta"]["chartId"] = written[node["meta"]["uuid"]]
-        d = self.dashboards.setdefault(dash["slug"], {"slices": set(), "roles": []})
-        d.update(position=pos, metadata=dash["metadata"], title=dash["dashboard_title"])
+        # the import finds a dashboard by its uuid and overwrites its slug, as Superset's does
+        old = next((k for k, v in self.dashboards.items() if v.get("uuid") == dash["uuid"]), dash["slug"])
+        d = self.dashboards.pop(old, None) or {"slices": set(), "roles": []}
+        self.dashboards[dash["slug"]] = d
+        d.update(position=pos, metadata=dash["metadata"], title=dash["dashboard_title"], uuid=dash["uuid"])
         uuids = [n["meta"]["uuid"] for n in pos.values() if isinstance(n, dict) and n.get("type") == "CHART"]
         for u in reversed(uuids):              # stops at the first chart not in the bundle, as Superset does
             if u not in written:
@@ -316,6 +319,24 @@ def test_a_persons_chart_stays_in_its_place_through_a_new_version(tiles, charts)
                      if isinstance(n, dict) and n.get("meta", {}).get("uuid") == mine)
     assert grid.index(mine_node) > yours
     assert s.dashboards[slug]["position"][mine_node]["meta"]["chartId"] == s.charts[mine]["id"]
+
+
+def test_a_tile_made_under_a_slug_with_non_ascii_letters_is_renamed_with_its_charts(tiles, charts):
+    """Slugs once kept any letter (str.isalnum); now only ASCII ones. A tile synced back then is the same
+    tile: renamed, with the person's charts still placed, not a second dashboard next to an orphan."""
+    s = Superset()
+    plugin = "données::Équité"
+    tiles.sync_plugin(PID, "mcas", plugin, "Fairness", "0.4.1", V1, store=s, importer=s)
+    slug = charts.plugin_slug(PID, plugin)
+    older = f"aisc-{HEX}-données-équité"
+    s.dashboards[older] = s.dashboards.pop(slug)                     # as the earlier sync named it
+    mine = s.add_user_chart(older)
+    out = tiles.sync_plugin(PID, "mcas", plugin, "Fairness", "0.4.2", V2, store=s, importer=s)
+    assert out["slug"] == slug and list(s.dashboards) == [slug]
+    placed, linked = on_dashboard(s, slug)
+    assert mine in placed and mine in linked
+    assert charts.chart_uuid(PID, plugin, 0, "Drift Score") in placed
+    assert charts.chart_uuid(PID, plugin, 1, "PSI per feature") not in s.charts    # the dropped default
 
 
 def test_a_persons_chart_with_no_place_goes_under_your_charts(tiles, charts):

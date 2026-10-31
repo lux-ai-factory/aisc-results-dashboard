@@ -110,11 +110,22 @@ def made_by_sync(params: dict, chart_uuid: str) -> bool:
 
 
 def plugin_slug(pid: str, plugin: str) -> str:
-    """The dashboard of one plugin in one project: aisc-<project hex>-<plugin>, in URL-safe lower case."""
-    name = "".join(ch if ch.isalnum() else "-" for ch in plugin.lower()).strip("-")
+    """The dashboard of one plugin in one project: aisc-<project hex>-<plugin>, in ASCII lower case and digits,
+    which is all the ledger (ledger._SLUG) and the platform's witness read a project from."""
+    return _slug(pid, plugin, lambda ch: ch in "abcdefghijklmnopqrstuvwxyz0123456789")
+
+
+def older_plugin_slug(pid: str, plugin: str) -> str:
+    """The slug a tile had when any letter was kept (é, ß, ...), so a sync finds a tile it made back then."""
+    return _slug(pid, plugin, str.isalnum)
+
+
+def _slug(pid: str, plugin: str, keeps) -> str:
+    name = "".join(ch if keeps(ch) else "-" for ch in plugin.lower()).strip("-")
     while "--" in name:
         name = name.replace("--", "-")
-    return f"aisc-{str(pid).replace('-', '')}-{name}"[:255]
+    hexed = str(pid).replace("-", "")
+    return f"aisc-{hexed}-{name}"[:255].rstrip("-") if name else f"aisc-{hexed}"
 
 
 def chart_uuid(pid: str, plugin: str, index: int, title: str) -> str:

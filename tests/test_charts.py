@@ -197,6 +197,18 @@ def test_the_bundle_holds_what_the_import_needs(charts):
     assert len(placed) == 3 and all("chartId" in p["meta"] and "uuid" in p["meta"] for p in placed)
 
 
+@pytest.mark.parametrize("plugin", ["data-monitor::DataDriftPlugin", "LangBiTe", "données::Équité", "straße",
+                                    "数据", "--a__b--", "x" * 300])
+def test_every_plugin_slug_is_one_the_ledger_reads_as_its_project(charts, plugin):
+    """The ledger (and the platform's witness, with the same pattern) reads a dashboard's project from its
+    slug, ASCII letters and digits only: a slug it cannot read is an event with no project."""
+    from aisc_ext import ledger
+
+    slug = charts.plugin_slug(PID, plugin)
+    assert ledger._SLUG.match(slug), slug
+    assert ledger.project_of(slug) == PID
+
+
 def test_chart_uuids_are_stable_and_differ_by_project_plugin_and_chart(charts):
     a, b = make_bundle(charts), make_bundle(charts)
     assert sorted(k for k in a if k.startswith("charts/")) == sorted(k for k in b if k.startswith("charts/"))
