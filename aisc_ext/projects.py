@@ -682,10 +682,12 @@ class SupersetStore:
         whatever is asked."""
         from superset.models.slice import Slice  # type: ignore
 
+        from aisc_ext import charts
+
         session = self._db().session
         for key in chart_uuids:
             piece = session.query(Slice).filter_by(uuid=uuid.UUID(key)).one_or_none()
-            if piece is not None and "aisc_chart_id" in json.loads(piece.params or "{}"):
+            if piece is not None and charts.made_by_sync(json.loads(piece.params or "{}"), str(piece.uuid)):
                 session.delete(piece)
         session.commit()
 

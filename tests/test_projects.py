@@ -434,6 +434,39 @@ def test_superset_store_renames_the_connection_row_in_place(monkeypatch):
     assert row.database_name == _db_name()
 
 
+def test_superset_store_deletes_only_the_charts_a_sync_made(monkeypatch):
+    """SupersetStore.delete_charts deletes a default the sync made and keeps a person's 'Save as' copy of it,
+    which carries the same aisc_chart_id under a uuid of its own, even when asked to delete both."""
+    import json
+    import sys
+    import types
+
+    from aisc_ext import projects as p
+
+    made = uuid.uuid4()
+    copied = uuid.uuid4()
+    pieces = [types.SimpleNamespace(uuid=made, params=json.dumps({"aisc_chart_id": str(made)})),
+              types.SimpleNamespace(uuid=copied, params=json.dumps({"aisc_chart_id": str(made)}))]
+    deleted = []
+
+    class Query:
+        def __init__(self, items):
+            self.items = items
+
+        def filter_by(self, **kw):
+            return Query([i for i in self.items if all(getattr(i, k) == v for k, v in kw.items())])
+
+        def one_or_none(self):
+            return self.items[0] if self.items else None
+
+    session = types.SimpleNamespace(query=lambda model: Query(pieces), delete=deleted.append, commit=lambda: None)
+    monkeypatch.setitem(sys.modules, "superset", types.SimpleNamespace(db=types.SimpleNamespace(session=session)))
+    monkeypatch.setitem(sys.modules, "superset.models", types.ModuleType("superset.models"))
+    monkeypatch.setitem(sys.modules, "superset.models.slice", types.SimpleNamespace(Slice=type("Slice", (), {})))
+    p.SupersetStore().delete_charts([str(made), str(copied)])
+    assert [piece.uuid for piece in deleted] == [made]
+
+
 def test_a_persons_untagged_chart_on_the_projects_dataset_is_the_projects(projects):
     """Unregister found charts by their aisc_project tag only. An imported chart
     (the import strips the tag) or one built from the dataset list carries none: once off every dashboard, it
