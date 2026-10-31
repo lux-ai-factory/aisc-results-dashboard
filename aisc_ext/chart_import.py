@@ -66,6 +66,8 @@ def rewrite(data: bytes, *, pid: str, source: dict) -> tuple[dict[str, str], lis
         if not path.startswith("charts/"):
             continue
         chart = yaml.safe_load(text)
+        if not isinstance(chart, dict) or not chart.get("uuid"):
+            raise ValueError("a chart in the file has no uuid")
         own = str(uuid.uuid5(_NAMESPACE, f"{pid}:{chart['uuid']}"))
         params = {k: v for k, v in (chart.get("params") or {}).items() if k not in _AISC_KEYS}
         params.pop("datasource", None)

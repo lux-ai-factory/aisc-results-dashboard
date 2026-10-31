@@ -77,6 +77,8 @@ def test_an_imported_chart_is_the_persons_not_aiscs(imp):
     (b"not a zip", "not a ZIP"),
     ("no-charts", "no chart"),
     ("dashboard", "chart export"),
+    ("chart-without-uuid", "no uuid"),
+    ("chart-not-a-mapping", "no uuid"),
 ])
 def test_a_file_it_cannot_take_is_refused_with_why(imp, bad, message):
     if bad == "no-charts":
@@ -86,6 +88,13 @@ def test_a_file_it_cannot_take_is_refused_with_why(imp, bad, message):
         bad = buf.getvalue()
     elif bad == "dashboard":
         bad = export_zip(kind="Dashboard")
+    elif bad in ("chart-without-uuid", "chart-not-a-mapping"):
+        chart = {"slice_name": "a"} if bad == "chart-without-uuid" else ["slice_name", "a"]
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("x/metadata.yaml", yaml.safe_dump({"version": "1.0.0", "type": "Slice"}))
+            z.writestr("x/charts/a.yaml", yaml.safe_dump(chart))
+        bad = buf.getvalue()
     with pytest.raises(ValueError, match=message):
         imp.rewrite(bad, pid=PID, source=SOURCE)
 
