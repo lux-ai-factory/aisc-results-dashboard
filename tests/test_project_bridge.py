@@ -177,6 +177,16 @@ def test_an_ownership_failure_never_blocks_a_sign_in():
     assert user.roles                                   # signed in, with the roles
 
 
+def test_a_sign_in_keeps_the_stakeholder_group_roles_an_admin_gave():
+    """Keycloak knows nothing of the review groups (legal, compliance, ...): an Admin gives them in Superset,
+    and category review requests go to whoever holds them, so a sign-in must not take them away."""
+    security = _load("aisc_ext.security")
+    held = [type("Role", (), {"name": n})() for n in ("AiscViewer", "legal", "Gamma")]
+    user = type("U", (), {"roles": held, "username": "u"})()
+    security.apply_sign_in(_FakeSM(), user, ["primary-user"], [(PID, "viewer")])
+    assert user.roles == [f"role:{security.VIEWER_ROLE}", f"role:AiscProject_{HEX}", "role:legal"]
+
+
 def test_an_unread_membership_keeps_the_current_roles_and_ownership(caplog):
     """None from _member_projects means the database could not be read, not "member of nothing": wiping the
     project roles then would lock every member out of their dashboards until the next sign-in."""

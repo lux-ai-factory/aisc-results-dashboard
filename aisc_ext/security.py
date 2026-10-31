@@ -118,7 +118,8 @@ def apply_sign_in(sm, user, realm_roles, memberships, *, sync_ownership=None) ->
     """What every sign-in does, whichever way the person came (the gateway's token or OAuth): the roles
     (roles_for_login), then, for owners and editors, ownership of their projects' plugin dashboards. Both
     paths call this one function, so neither can miss the ownership step; the stack signs people in through
-    the gateway. An ownership failure is logged, never blocks the sign-in.
+    the gateway. The stakeholder-group roles an Admin gave (legal, compliance, ...) are kept. An ownership
+    failure is logged, never blocks the sign-in.
 
     memberships None means they could not be read: the person keeps the roles and ownership they have, so a
     database outage does not lock every member out of their projects. Until the next sign-in that reads them,
@@ -133,7 +134,11 @@ def apply_sign_in(sm, user, realm_roles, memberships, *, sync_ownership=None) ->
             return
         memberships = []
         sync_ownership = None
+    from aisc_ext.reviews.service import STAKEHOLDER_GROUPS
+
     desired = roles_for_login(realm_roles, memberships)
+    # The review groups are given in Superset, not in Keycloak: keep the ones the person holds
+    desired += [r.name for r in user.roles if r.name in STAKEHOLDER_GROUPS and r.name not in desired]
     user.roles = [sm.find_role(r) for r in desired if sm.find_role(r)]
     sm.update_user(user)
     if sync_ownership is None:
