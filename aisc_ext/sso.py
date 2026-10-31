@@ -40,8 +40,9 @@ class KeycloakSecurityManager(SupersetSecurityManager):
         Read from core.project_member over AISC_MEMBERSHIP_DB_URI (dashboard_ro on
         `platform`), with a plain SQLAlchemy engine without a pool that is
         disposed after this sign-in. It is never a Superset connection, so SQL
-        Lab cannot reach `platform`. An unset DSN, a DSN that is not read-only,
-        or an unreachable database gives an empty list (no project roles)."""
+        Lab cannot reach `platform`. An unset DSN or a DSN that is not read-only
+        gives an empty list (no project roles). A read that fails gives None:
+        the memberships are unknown, and apply_sign_in keeps the current roles."""
         if not subject:
             return []
         try:
@@ -64,7 +65,7 @@ class KeycloakSecurityManager(SupersetSecurityManager):
                 engine.dispose()
         except Exception:
             log.warning("could not read the projects of %s", subject, exc_info=True)
-            return []
+            return None
 
     def auth_user_oauth(self, userinfo):
         user = super().auth_user_oauth(userinfo)

@@ -177,6 +177,59 @@ def test_an_ownership_failure_never_blocks_a_sign_in():
     assert user.roles                                   # signed in, with the roles
 
 
+def test_an_unread_membership_keeps_the_current_roles_and_ownership(caplog):
+    """None from _member_projects means the database could not be read, not "member of nothing": wiping the
+    project roles then would lock every member out of their dashboards until the next sign-in."""
+    security = _load("aisc_ext.security")
+    sm, owned = _FakeSM(), []
+    user = type("U", (), {"roles": ["role:AiscViewer", f"role:AiscProject_{HEX}"], "username": "u"})()
+    with caplog.at_level("WARNING"):
+        security.apply_sign_in(sm, user, ["primary-user"], None, sync_ownership=lambda u, m: owned.append(m))
+    assert user.roles == ["role:AiscViewer", f"role:AiscProject_{HEX}"]
+    assert sm.updated == [user] and owned == []
+    assert "u" in caplog.text and "kept" in caplog.text
+
+
+def test_an_unread_membership_on_a_first_sign_in_gives_the_realm_role_only():
+    security = _load("aisc_ext.security")
+    user = type("U", (), {"roles": [], "username": "u"})()
+    security.apply_sign_in(_FakeSM(), user, ["primary-user"], None)
+    assert user.roles == [f"role:{security.VIEWER_ROLE}"]
+
+
+@pytest.fixture
+def sso(monkeypatch):
+    """aisc_ext.sso on a stand-in for Superset's SecurityManager, which is all it needs from Superset here."""
+    import sys
+    import types
+
+    superset = types.ModuleType("superset")
+    superset_security = types.ModuleType("superset.security")
+    superset_security.SupersetSecurityManager = type("SupersetSecurityManager", (), {})
+    superset.security = superset_security
+    monkeypatch.setitem(sys.modules, "superset", superset)
+    monkeypatch.setitem(sys.modules, "superset.security", superset_security)
+    monkeypatch.delitem(sys.modules, "aisc_ext.sso", raising=False)
+    yield importlib.import_module("aisc_ext.sso")
+    sys.modules.pop("aisc_ext.sso", None)
+
+
+def test_an_unreachable_membership_database_reads_as_unknown_not_as_no_projects(sso, monkeypatch):
+    monkeypatch.setenv("AISC_MEMBERSHIP_DB_URI", "postgresql://dashboard_ro:x@127.0.0.1:1/platform")
+    import sqlalchemy
+
+    def unreachable(*a, **k):
+        raise sqlalchemy.exc.OperationalError("connect", {}, Exception("refused"))
+    monkeypatch.setattr(sqlalchemy, "create_engine", unreachable)
+    assert sso.KeycloakSecurityManager()._member_projects("sub-1") is None
+
+
+def test_no_subject_or_no_membership_database_is_no_projects(sso, monkeypatch):
+    monkeypatch.delenv("AISC_MEMBERSHIP_DB_URI", raising=False)
+    assert sso.KeycloakSecurityManager()._member_projects("sub-1") == []
+    assert sso.KeycloakSecurityManager()._member_projects(None) == []
+
+
 def test_both_sign_in_paths_use_it():
     import pathlib
     root = pathlib.Path(__file__).resolve().parents[1]
