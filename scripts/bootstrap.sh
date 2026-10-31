@@ -50,7 +50,15 @@ echo "==> starting the stack"
 docker compose up -d
 
 echo "==> waiting for the superset container to be running"
-until [[ "$(docker compose ps -q superset)" ]]; do sleep 2; done
+tries=60
+until [[ "$(docker compose ps -q superset)" ]]; do
+  tries=$((tries - 1))
+  if (( tries == 0 )); then
+    echo "bootstrap: the superset container is not running after 2 minutes; see docker compose logs superset" >&2
+    exit 1
+  fi
+  sleep 2
+done
 
 echo "==> initialising metadata DB + admin"
 docker compose exec -T superset superset db upgrade

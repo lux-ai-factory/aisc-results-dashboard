@@ -2,6 +2,7 @@
 compose refuses to start with them empty, so a plain copy would make a first run fail; an admin password
 defaulting to `admin` would be one anyone knows. The first run fills every empty secret with a random
 one, the admin's included, and says where it is; `--env-only` stops there."""
+import os
 import re
 import shutil
 import subprocess
@@ -41,6 +42,24 @@ def test_a_second_run_keeps_what_is_there(tmp_path):
     first = _env(root / ".env")
     subprocess.run(["bash", "scripts/bootstrap.sh", "--env-only"], cwd=root, check=True, capture_output=True)
     assert _env(root / ".env") == first
+
+
+def test_a_superset_container_that_never_runs_stops_the_script_with_where_to_look(tmp_path):
+    """A superset container that exits after `up -d` (it has no restart policy) is never listed by
+    `docker compose ps -q`: the wait gives up and names the logs to read, instead of waiting forever."""
+    root = _checkout(tmp_path)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    calls = tmp_path / "docker-calls"
+    (bin_dir / "docker").write_text(f'#!/bin/sh\necho "$*" >> "{calls}"\n')
+    (bin_dir / "sleep").write_text("#!/bin/sh\n")
+    for tool in ("docker", "sleep"):
+        (bin_dir / tool).chmod(0o755)
+    run = subprocess.run(["bash", "scripts/bootstrap.sh"], cwd=root, capture_output=True, text=True, timeout=30,
+                         env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"})
+    assert run.returncode != 0
+    assert "docker compose logs superset" in run.stderr
+    assert not [c for c in calls.read_text().splitlines() if c.startswith("compose exec")]
 
 
 def test_the_script_has_no_admin_password_of_its_own():
