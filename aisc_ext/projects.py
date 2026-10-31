@@ -342,10 +342,10 @@ def authorize_bridge(headers, env) -> int | None:
     """401 unless the call carries the bridge token; None when it may go on.
 
     No DASHBOARD_BRIDGE_TOKEN configured means no bridge, not an open one.
-    Compared in constant time."""
+    Compared in constant time, as bytes: compare_digest refuses a str that is not ASCII."""
     expected = env.get("DASHBOARD_BRIDGE_TOKEN") or ""
     given = headers.get("X-AISC-Bridge-Token") or ""
-    if not expected or not hmac.compare_digest(given, expected):
+    if not expected or not hmac.compare_digest(given.encode(), expected.encode()):
         return 401
     return None
 

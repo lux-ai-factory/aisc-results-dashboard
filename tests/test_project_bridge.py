@@ -62,6 +62,13 @@ def test_the_comparison_is_constant_time(projects, monkeypatch):
     assert calls, "authorize_bridge must use hmac.compare_digest"
 
 
+def test_a_token_with_non_ascii_characters_is_401_not_an_error(projects):
+    """hmac.compare_digest refuses a str that is not ASCII with a TypeError, which Flask answers 500."""
+    assert projects.authorize_bridge({"X-AISC-Bridge-Token": "s3cret-brïdge"}, ENV) == 401
+    assert projects.authorize_bridge({"X-AISC-Bridge-Token": "s3cret-brïdge"},
+                                     {"DASHBOARD_BRIDGE_TOKEN": "s3cret-brïdge"}) is None
+
+
 # ---- login role sync -------------------------------------------------------
 
 def test_a_member_gets_the_project_role_on_top_of_the_realm_role():
