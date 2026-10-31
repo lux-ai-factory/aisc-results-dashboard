@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Ledger events for dashboard comments and review requests.
 
-A project's dashboard has the slug ``aisc-<pid hex>`` (aisc_ext.projects), so the event of a comment or a
-review finds its project's ledger from the dashboard it is on. The gateway's witness reads the same slug
+A plugin's dashboard in a project has the slug ``aisc-<pid hex>-<plugin>`` (charts.plugin_slug; a
+dashboard made by older code has ``aisc-<pid hex>``), so the event of a comment or a review finds its
+project's ledger from the dashboard it is on. The gateway's witness reads the same slug
 from the request (in the path, or in ``dashboard_id=``), which is why the Review page names the dashboard
 by its slug in every call that writes.
 
