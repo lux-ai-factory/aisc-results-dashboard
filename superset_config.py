@@ -144,7 +144,7 @@ if os.environ.get("AISC_OAUTH") == "1":
     AUTH_USER_REGISTRATION = True
     # New users get the read-only viewer role, not Gamma: Gamma can edit charts
     # and dashboards that everyone else reads.
-    from aisc_ext.security import VIEWER_ROLE  # noqa: E402
+    from aisc_ext.security import VIEWER_ROLE, require_secret  # noqa: E402
 
     AUTH_USER_REGISTRATION_ROLE = VIEWER_ROLE
     # Recompute roles at every sign-in, so a role changed in Keycloak (or a
@@ -158,8 +158,8 @@ if os.environ.get("AISC_OAUTH") == "1":
         "token_key": "access_token",
         "remote_app": {
             "client_id": os.environ.get("OIDC_CLIENT_ID") or "superset",
-            # no fallback: a published secret is no secret (the login is off unless AISC_OAUTH=1)
-            "client_secret": os.environ["OIDC_CLIENT_SECRET"],
+            # no fallback and no empty value: a published secret is no secret (the login is off unless AISC_OAUTH=1)
+            "client_secret": require_secret(os.environ, "OIDC_CLIENT_SECRET"),
             "server_metadata_url": f"{OIDC_ISSUER}/.well-known/openid-configuration",
             "api_base_url": f"{OIDC_ISSUER}/protocol/",
             "client_kwargs": {"scope": "openid email profile"},

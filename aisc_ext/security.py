@@ -221,6 +221,15 @@ def own_roles_only(query, user=None):
     return query.filter(entity.id.in_([r.id for r in roles]))
 
 
+def require_secret(env, name: str) -> str:
+    """The secret `name` from `env`, or RuntimeError when it is unset or blank: an empty secret is as
+    good as a published one, so the dashboard refuses to start on it."""
+    value = env.get(name) or ""
+    if not value.strip():
+        raise RuntimeError(f"{name} is not set or is empty: run the aisc repo's scripts/secrets.sh")
+    return value
+
+
 def map_keycloak_roles(realm_roles: list[str]) -> list[str]:
     roles = set(realm_roles or [])
     for kc_role, fab_role in _PRIORITY:

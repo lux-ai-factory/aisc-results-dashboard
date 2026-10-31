@@ -69,9 +69,10 @@ CONFIG = (REPO / "superset_config.py").read_text()
 
 def test_the_config_has_no_fallback_oidc_client_secret():
     """OIDC_CLIENT_SECRET has no fallback such as `superset-secret`: with AISC_OAUTH=1 and no secret
-    set, the dashboard would run its Keycloak login on a value anyone could read."""
+    set, or set empty, the dashboard would run its Keycloak login on a value anyone could read."""
     assert "superset-secret" not in CONFIG
-    assert 'os.environ["OIDC_CLIENT_SECRET"]' in CONFIG
+    assert 'require_secret(os.environ, "OIDC_CLIENT_SECRET")' in CONFIG
+    assert 'os.environ["OIDC_CLIENT_SECRET"]' not in CONFIG
 
 
 def test_guest_tokens_are_signed_with_a_secret_of_this_install():
@@ -97,3 +98,18 @@ def test_every_compose_file_loads(path):
     import yaml
 
     assert isinstance(yaml.safe_load(path.read_text()), dict)
+
+
+@pytest.mark.parametrize("env", [{}, {"OIDC_CLIENT_SECRET": ""}, {"OIDC_CLIENT_SECRET": "  "}])
+def test_an_unset_or_empty_secret_is_refused(env):
+    """An empty OIDC_CLIENT_SECRET would send the Keycloak client an empty secret, the same as a shipped one."""
+    from aisc_ext.security import require_secret
+
+    with pytest.raises(RuntimeError, match="OIDC_CLIENT_SECRET"):
+        require_secret(env, "OIDC_CLIENT_SECRET")
+
+
+def test_a_set_secret_is_returned_as_it_is():
+    from aisc_ext.security import require_secret
+
+    assert require_secret({"OIDC_CLIENT_SECRET": "from-secrets"}, "OIDC_CLIENT_SECRET") == "from-secrets"
