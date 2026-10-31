@@ -1,3 +1,5 @@
+# Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
+# SPDX-License-Identifier: Apache-2.0
 """Access to the platform's shared database, limited to project memberships.
 
 Each project's results live in that project's own database and are read over that
