@@ -52,6 +52,8 @@ class Superset:
         from aisc_ext.projects import ENGINE_RESULTS_COLUMNS, engine_results_sql
         self.dataset = {"sql": engine_results_sql(), "columns": [c[0] for c in ENGINE_RESULTS_COLUMNS]}
         self.upserts = []
+        # the values of each dimension in the plugin's results (store.dimension_values): a radar's axes
+        self.values = {"feature": ["age", "income"]}
         self.events = []            # "lock", "unlock" and each import, in order
 
     # -- what the tile code reads and writes --
@@ -85,6 +87,10 @@ class Superset:
 
     def latest_runs(self, pid, label):
         return [dict(r) for r in self.runs]
+
+    def dimension_values(self, pid, label, dimensions):
+        self.asked_values = list(dimensions)
+        return {d: list(self.values.get(d, [])) for d in dimensions}
 
     def chart_id(self, chart_uuid):
         c = self.charts.get(chart_uuid)
@@ -181,11 +187,11 @@ def test_a_sync_makes_the_plugins_dashboard_its_starter_and_its_defaults(tiles, 
     s = Superset()
     out = sync(tiles, s)
     slug = charts.plugin_slug(PID, PLUGIN)
-    assert out == {"slug": slug, "charts": 2}
+    assert out == {"slug": slug, "charts": 3}                           # V1's two, and PSI per feature's radar
     assert [k for k, _ in s.imports] == ["charts", "dashboard"]
     assert charts.starter_uuid(PID, PLUGIN) in s.charts
     placed, linked = on_dashboard(s, slug)
-    assert len(placed) == 2 and placed == linked
+    assert len(placed) == 3 and placed == linked
     assert charts.starter_uuid(PID, PLUGIN) not in placed                 # the starter stays off the dashboard
     assert s.dashboards[slug]["roles"] == [f"AiscProject_{HEX}"]
     assert s.dashboards[slug]["title"] == "mcas · Data Drift"
@@ -489,3 +495,22 @@ def test_with_only_local_runs_the_latest_of_their_versions_is_chosen(tiles):
 def test_runs_stamped_with_no_version_choose_none(tiles):
     assert opening(tiles, [(None, False, 1)]) == (None, ["Run 1"])
     assert opening(tiles, []) == (None, [])
+
+
+def test_a_bar_chart_along_one_dimension_comes_with_its_radar_whose_axes_are_the_values_in_the_results(tiles):
+    s = Superset()
+    out = tiles.sync_plugin(PID, "Mcas", PLUGIN, "Data Drift", "1.0.0", V1, store=s, importer=s)
+    assert out["charts"] == 3 and s.asked_values == ["feature"]
+    (radar,) = [c for c in s.charts.values() if c["params"].get("viz_type") == "radar"]
+    assert radar["name"] == "Default · PSI per feature (radar)"
+    assert [m["label"] for m in radar["params"]["metrics"]] == ["age", "income"]
+    slug = next(iter(s.dashboards))
+    assert radar["id"] in s.dashboards[slug]["slices"]
+
+
+def test_a_second_sync_keeps_the_radar_and_adds_none(tiles):
+    s = Superset()
+    tiles.sync_plugin(PID, "Mcas", PLUGIN, "Data Drift", "1.0.0", V1, store=s, importer=s)
+    before = sorted(s.charts)
+    tiles.sync_plugin(PID, "Mcas", PLUGIN, "Data Drift", "1.0.0", V1, store=s, importer=s)
+    assert sorted(s.charts) == before

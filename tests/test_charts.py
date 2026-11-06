@@ -112,6 +112,69 @@ def test_kinds_superset_draws_differently_become_tables_and_say_so(charts, kind)
     assert viz_type == "table" and f"asked for: {kind}" in description
 
 
+# ── Radars ───────────────────────────────────────────────────────────────────
+
+CATEGORY_BARS = viz("bars", ["Jailbreak success"], title="Jailbreak success by category",
+                    group_by_dimensions=["category"], value_format="percent")
+RADAR_COLUMNS = COLUMNS + ["category", "language"]
+
+
+def test_a_bar_chart_along_one_dimension_gets_a_radar_beside_it(charts):
+    out = charts.with_radars([DRIFT[0], CATEGORY_BARS, DRIFT[2]])
+    assert out[:2] == [DRIFT[0], CATEGORY_BARS] and out[3] == DRIFT[2]
+    radar = out[2]
+    assert radar["chart_type"] == "radar" and radar["title"] == "Jailbreak success by category (radar)"
+    assert radar["metrics"] == ["Jailbreak success"] and radar["group_by_dimensions"] == ["category"]
+    assert radar["value_format"] == "percent"
+
+
+def test_bars_along_no_dimension_or_two_get_no_radar(charts):
+    two = viz("bars", ["psi"], title="two", group_by_dimensions=["feature", "concern"])
+    assert charts.with_radars([DRIFT[0], two, DRIFT[2]]) == [DRIFT[0], two, DRIFT[2]]
+
+
+def test_radars_are_not_added_twice(charts):
+    once = charts.with_radars([CATEGORY_BARS])
+    assert charts.with_radars(once) == once
+
+
+def test_the_dimensions_a_radar_needs_values_of(charts):
+    assert charts.radar_dimensions(charts.with_radars([DRIFT[0], CATEGORY_BARS])) == ["category"]
+
+
+def test_a_radar_has_an_axis_per_value_and_a_polygon_per_run(charts):
+    radar = charts.with_radars([CATEGORY_BARS])[1]
+    viz_type, params, _ = charts.chart_settings(radar, plugin_label="StrongREJECT (Mijke)", columns=RADAR_COLUMNS,
+                                                values={"category": ["cv", "health"]})
+    assert viz_type == "radar" and params["groupby"] == ["run"]
+    assert [m["label"] for m in params["metrics"]] == ["cv", "health"]
+    assert params["metrics"][0] == {"expressionType": "SQL", "label": "cv",
+                                    "sqlExpression": "AVG(CASE WHEN category = 'cv' THEN score END)"}
+    assert filters_of(params)[("metric", "IN")] == ["Jailbreak success"]
+    assert filters_of(params)[("tool", "==")] == "StrongREJECT (Mijke)"
+
+
+def test_a_percent_radar_runs_every_axis_from_0_to_100_percent(charts):
+    radar = charts.with_radars([CATEGORY_BARS])[1]
+    _, params, _ = charts.chart_settings(radar, plugin_label="x", columns=RADAR_COLUMNS,
+                                         values={"category": ["cv", "health"]})
+    assert params["column_config"] == {"cv": {"radarMetricMaxValue": 1}, "health": {"radarMetricMaxValue": 1}}
+    assert params["number_format"] == charts.PERCENT
+
+
+def test_a_value_with_a_quote_cannot_break_the_axis_sql(charts):
+    radar = charts.with_radars([CATEGORY_BARS])[1]
+    _, params, _ = charts.chart_settings(radar, plugin_label="x", columns=RADAR_COLUMNS,
+                                         values={"category": ["it's"]})
+    assert params["metrics"][0]["sqlExpression"] == "AVG(CASE WHEN category = 'it''s' THEN score END)"
+
+
+def test_a_radar_with_no_values_yet_is_drawn_as_a_table(charts):
+    radar = charts.with_radars([CATEGORY_BARS])[1]
+    viz_type, _, description = charts.chart_settings(radar, plugin_label="x", columns=RADAR_COLUMNS, values={})
+    assert viz_type == "table" and "asked for: radar" in description
+
+
 # ── Filters ──────────────────────────────────────────────────────────────────
 
 def test_a_percent_chart_shows_its_ratios_as_percent(charts):

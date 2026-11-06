@@ -50,8 +50,40 @@ def _filter(subject, operator, comparator) -> dict:
             "clause": "WHERE"}
 
 
-def chart_settings(v: dict, *, plugin_label: str, columns) -> tuple[str, dict, str]:
-    """(Superset chart type, its settings, its description) for one MetricVisualization (as a dict)."""
+RADAR_SUFFIX = " (radar)"
+
+
+def with_radars(visualizations: list[dict]) -> list[dict]:
+    """The plugin's charts, each bar chart along one dimension followed by a radar of the same data: one axis
+    per value of that dimension, one polygon per run, so runs (on two targets, say) are compared at a glance.
+    A radar already there is not added again."""
+    have = {(v.get("title") or "") for v in visualizations if _value(v.get("chart_type")) == "radar"}
+    out = []
+    for v in visualizations:
+        out.append(v)
+        groups = v.get("group_by_dimensions") or []
+        title = (v.get("title") or ", ".join(v.get("metrics") or [])) + RADAR_SUFFIX
+        if _value(v.get("chart_type")) == "bars" and len(groups) == 1 and title not in have:
+            out.append({"chart_type": "radar", "metrics": list(v.get("metrics") or []), "title": title,
+                        "group_by_dimensions": list(groups), "value_format": v.get("value_format"),
+                        "filter_dimensions": v.get("filter_dimensions")})
+            have.add(title)
+    return out
+
+
+def radar_dimensions(visualizations: list[dict]) -> list[str]:
+    """The dimensions whose values a radar needs as its axes, each once."""
+    return list(dict.fromkeys(d for v in visualizations if _value(v.get("chart_type")) == "radar"
+                              for d in (v.get("group_by_dimensions") or [])[:1]))
+
+
+def _quoted(value) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def chart_settings(v: dict, *, plugin_label: str, columns, values: dict | None = None) -> tuple[str, dict, str]:
+    """(Superset chart type, its settings, its description) for one MetricVisualization (as a dict). values:
+    each dimension's values in the results, a radar's axes (a radar with none yet is drawn as a table)."""
     known = set(columns)
     kind = _value(v.get("chart_type"))
     metrics = list(v.get("metrics") or [])
@@ -67,7 +99,14 @@ def chart_settings(v: dict, *, plugin_label: str, columns) -> tuple[str, dict, s
     filters += [_filter(d, "IN", list(values)) for d, values in (v.get("filter_dimensions") or {}).items() if d in known]
 
     viz_type = _KINDS.get(kind, "table")
-    if viz_type == "echarts_timeseries_bar":
+    axes = list((values or {}).get(groups[0], [])) if kind == "radar" and groups else []
+    if axes:
+        viz_type = "radar"
+        params = {"groupby": ["run"], "metrics": [
+            {"expressionType": "SQL", "label": str(a),
+             "sqlExpression": f"AVG(CASE WHEN {groups[0]} = {_quoted(a)} THEN score END)"} for a in axes],
+            "show_legend": True, "legendOrientation": "top", "column_config": {}}
+    elif viz_type == "echarts_timeseries_bar":
         x_axis = groups[0] if groups else "metric"
         series = label or ("metric" if x_axis != "metric" else None)
         params = {"x_axis": x_axis, "metrics": [_score("AVG")], "groupby": [g for g in (series, "run") if g],
@@ -84,7 +123,10 @@ def chart_settings(v: dict, *, plugin_label: str, columns) -> tuple[str, dict, s
                   "metrics": [_score("AVG", metrics[0] if single else "score")], "all_columns": [],
                   "percent_metrics": [], "server_pagination": False, "page_length": 50, "include_search": True}
     if _value(v.get("value_format")) == "percent":
-        if viz_type == "pie":
+        if viz_type == "radar":
+            params["column_config"] = {m["label"]: {"radarMetricMaxValue": 1} for m in params["metrics"]}
+            params["number_format"] = PERCENT
+        elif viz_type == "pie":
             params["number_format"] = PERCENT
         elif viz_type == "table":
             params["column_config"] = {params["metrics"][0]["label"]: {"d3NumberFormat": PERCENT}}
@@ -307,7 +349,7 @@ def native_filters(dataset_uuid: str, default_version: int | None = None, defaul
 
 def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset_uuid, dataset_name,
            database_uuid, database_name, sqlalchemy_uri, columns, starter_chart_id, user_part=None,
-           default_version=None, default_runs=()) -> dict:
+           default_version=None, default_runs=(), values=None) -> dict:
     """The export bundle of one plugin's dashboard in one project: {path in the ZIP: YAML text}. The tile opens
     on default_version and default_runs (native_filters); no default run means the plugin has not run yet."""
     files = {"metadata.yaml": _dump({"version": _VERSION, "type": "Dashboard", "timestamp": _TIMESTAMP})}
@@ -315,7 +357,7 @@ def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset
                                database_name=database_name, sqlalchemy_uri=sqlalchemy_uri, columns=columns))
     placed = []
     for index, v in enumerate(visualizations):
-        viz_type, params, description = chart_settings(v, plugin_label=label, columns=columns)
+        viz_type, params, description = chart_settings(v, plugin_label=label, columns=columns, values=values)
         cid = chart_uuid(pid, plugin, index, v.get("title") or "")
         params.update({"aisc_project": pid, "aisc_plugin": plugin, "aisc_chart_id": cid})
         name = default_title(v)

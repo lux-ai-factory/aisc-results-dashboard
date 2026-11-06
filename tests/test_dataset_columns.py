@@ -34,7 +34,8 @@ def test_both_datasets_are_registered_with_their_declared_columns(projects):
                                         "target_kind", "target_component_kind", "target_label", "target_status",
                                         "tool", "run", "run_order", "local_run", "feature", "concern", "flag",
                                         "language", "input_type", "reflection_type", "model", "prompt", "response",
-                                        "expected", "statistic", "p_value"]
+                                        "expected", "category", "technique", "reasoning_exposed", "reply_language",
+                                        "statistic", "p_value"]
     assert _declared(store, CONTROLS) == ["title", "text", "article", "category", "question_order", "answer",
                                           "score", "system_version_number", "answered_at", "label",
                                           "submission_version", "questions_version"]
@@ -54,6 +55,8 @@ def test_the_types_are_the_ones_superset_itself_infers():
         "language": "STRING", "input_type": "STRING", "reflection_type": "STRING", "model": "STRING",
         # LangBiTe's failed cases
         "prompt": "STRING", "response": "STRING", "expected": "STRING",
+        # StrongREJECT (Mijke)'s per-question results
+        "category": "STRING", "technique": "STRING", "reasoning_exposed": "STRING", "reply_language": "STRING",
         "statistic": "FLOAT", "p_value": "FLOAT"}
     assert dict(p.CONTROLS_ANSWERS_COLUMNS) == {
         "title": "STRING", "text": "STRING", "article": "STRING", "category": "STRING",
@@ -219,12 +222,18 @@ def test_the_project_tag_and_sql_are_still_written(monkeypatch):
 
 # ── The run and the dimensions in the SQL ───────────────────────────────────
 
-def test_the_run_is_numbered_in_order_of_the_evaluations_and_named_with_its_time():
+def test_the_run_is_numbered_in_order_of_the_evaluations_and_named_with_its_target_and_time():
+    """Two runs on two targets are told apart in a legend by name (Run 7 · OpenAI back-end · 05 Nov ...);
+    a run with no target is named by its number and time alone. A run given a name (at launch or renamed) is
+    named by its number and that name (Run 15 · Local, 4 Nov)."""
     p = importlib.import_module("aisc_ext.projects")
     sql = " ".join(p.engine_results_sql().split())
     assert "dense_rank() OVER (ORDER BY e.created_at, e.id) AS run_order" in sql
     assert ("'Run ' || dense_rank() OVER (ORDER BY e.created_at, e.id) || ' · ' || "
-            "to_char(e.created_at, 'DD Mon YYYY, HH24:MI') AS run") in sql
+            "COALESCE(NULLIF(btrim(ep.name), ''), "
+            "CASE WHEN lm.file IS NOT NULL THEN lm.file || ' · ' WHEN ti.id IS NULL THEN '' "
+            "WHEN t.key IS NULL THEN tc.name::text || ' · ' ELSE t.label || ' · ' END || "
+            "to_char(e.created_at, 'DD Mon YYYY, HH24:MI')) AS run") in sql
     assert " WHERE " not in sql.split("FROM", 1)[1]          # test_s11_4: the database is the project
 
 
@@ -246,12 +255,14 @@ def test_each_dimension_column_reads_its_key_and_the_numbers_are_cast():
     p = importlib.import_module("aisc_ext.projects")
     sql = " ".join(p.engine_results_sql().split())
     for key in ("feature", "concern", "flag", "language", "input_type", "reflection_type", "model",
-                "prompt", "response", "expected"):
+                "prompt", "response", "expected", "category", "technique", "reasoning_exposed", "reply_language"):
         assert f"m.dimensions->>'{key}' AS {key}" in sql, key
     for key in ("statistic", "p_value"):
         assert (f"CASE WHEN m.dimensions->>'{key}' ~ '{p.NUMBER_PATTERN}' "
                 f"THEN (m.dimensions->>'{key}')::double precision END AS {key}") in sql, key
     # prompt, response, expected: LangBiTe's failed cases (0.2.6), the answer as the target gave it
+    # category, technique, reasoning_exposed, reply_language: StrongREJECT (Mijke)'s per-question results
     assert p.DIMENSION_COLUMNS == ("feature", "concern", "flag", "language", "input_type", "reflection_type",
-                                   "model", "prompt", "response", "expected")
+                                   "model", "prompt", "response", "expected", "category", "technique",
+                                   "reasoning_exposed", "reply_language")
     assert p.NUMERIC_DIMENSION_COLUMNS == ("statistic", "p_value")

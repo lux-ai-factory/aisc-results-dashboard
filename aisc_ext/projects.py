@@ -79,7 +79,10 @@ MEMBER_PROJECTS_SQL = "SELECT project_id, role FROM core.project_member WHERE su
 #: (the engine takes no floats in dimensions), cast back here, NULL when not a number ("nan").
 DIMENSION_COLUMNS = ("feature", "concern", "flag", "language", "input_type", "reflection_type", "model",
                      # LangBiTe's failed cases (0.2.6): the prompt as sent, the answer as given, what was expected
-                     "prompt", "response", "expected")
+                     "prompt", "response", "expected",
+                     # StrongREJECT (Mijke)'s per-question results: the jailbreak's category and technique,
+                     # whether the answer began with the model's reasoning, and the answer's language
+                     "category", "technique", "reasoning_exposed", "reply_language")
 NUMERIC_DIMENSION_COLUMNS = ("statistic", "p_value")
 NUMBER_PATTERN = r"^[-+]?([0-9]+[.]?[0-9]*|[.][0-9]+)([eE][-+]?[0-9]+)?$"
 
@@ -99,9 +102,14 @@ SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
                  AND t.last_card_number < (SELECT max(number) FROM project.system) THEN 'stale'
             ELSE 'current' END AS target_status,
        COALESCE(p.display_name, p.name, 'unknown') AS tool,
-       -- the run as people name it: its number among the project's evaluations, and when it ran
+       -- the run as people name it: its number among the project's evaluations, then the name it was given
+       -- (at launch or renamed), else its target (so runs on two targets are told apart in a legend) and when
+       -- it ran
        'Run ' || dense_rank() OVER (ORDER BY e.created_at, e.id) || ' · ' ||
-           to_char(e.created_at, 'DD Mon YYYY, HH24:MI') AS run,
+           COALESCE(NULLIF(btrim(ep.name), ''),
+           CASE WHEN lm.file IS NOT NULL THEN lm.file || ' · ' WHEN ti.id IS NULL THEN ''
+                WHEN t.key IS NULL THEN tc.name::text || ' · ' ELSE t.label || ' · ' END ||
+           to_char(e.created_at, 'DD Mon YYYY, HH24:MI')) AS run,
        dense_rank() OVER (ORDER BY e.created_at, e.id) AS run_order,
        CASE WHEN lm.file IS NOT NULL THEN 'yes' ELSE 'no' END AS local_run,
        {dimensions}
@@ -200,6 +208,15 @@ def engine_results_sql() -> str:
     at, with the card version. Takes no pid: each project database holds exactly
     one project's engine rows."""
     return _ENGINE_RESULTS_SQL
+
+
+def dimension_values_sql(dimension: str) -> str:
+    """The values one dimension column takes in one plugin's results (bound as :label, its tool), sorted:
+    a radar's axes. dimension must be one of DIMENSION_COLUMNS (it is a column name, not a bound value)."""
+    if dimension not in DIMENSION_COLUMNS:
+        raise ValueError(f"not a dimension column: {dimension}")
+    return (f"SELECT DISTINCT {dimension} FROM ({engine_results_sql()}) t "
+            f"WHERE tool = :label AND {dimension} IS NOT NULL AND {dimension} <> '' ORDER BY 1")
 
 
 def latest_runs_sql() -> str:
@@ -638,6 +655,22 @@ class SupersetStore:
             rows = conn.execute(text(latest_runs_sql()), {"label": label}).all()
         return [{"version": version, "local": local == "yes", "run": run, "run_order": order}
                 for version, local, run, order in rows]
+
+    def dimension_values(self, pid, label, dimensions):
+        """{dimension: its values in the plugin's results, sorted}: a radar's axes. Only the dataset's own
+        dimension columns are read."""
+        from sqlalchemy import text  # type: ignore
+        from superset.connectors.sqla.models import SqlaTable  # type: ignore
+
+        wanted = [d for d in dimensions if d in DIMENSION_COLUMNS]
+        dataset = self._db().session.query(SqlaTable).filter_by(table_name=f"engine_results_{_hex(pid)}").one_or_none()
+        if dataset is None or not wanted:
+            return {d: [] for d in dimensions}
+        out = {d: [] for d in dimensions}
+        with dataset.database.get_sqla_engine() as engine, engine.connect() as conn:
+            for d in wanted:
+                out[d] = [r[0] for r in conn.execute(text(dimension_values_sql(d)), {"label": label}).all()]
+        return out
 
     def chart_id(self, chart_uuid):
         from superset.models.slice import Slice  # type: ignore

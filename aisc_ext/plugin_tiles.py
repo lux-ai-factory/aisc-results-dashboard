@@ -145,6 +145,9 @@ def _sync(pid, project_name, plugin, label, version, visualizations, *, store, i
     if not results_dataset_current(store.dataset_sql(pid), source["columns"]):
         store.upsert("dataset", source["dataset_name"], results_dataset_spec(pid, source["database_name"]))
         source = store.source(pid)
+    visualizations = charts.with_radars(visualizations)
+    needed = charts.radar_dimensions(visualizations)
+    values = store.dimension_values(pid, label, needed) if needed else {}
     common = dict(pid=pid, plugin=plugin, label=label, **source)
     slug = charts.plugin_slug(pid, plugin)
     default_version, default_runs = opening(store.latest_runs(pid, label))
@@ -162,7 +165,7 @@ def _sync(pid, project_name, plugin, label, version, visualizations, *, store, i
 
     files = charts.bundle(project_name=project_name or pid, version=version, visualizations=visualizations,
                           starter_chart_id=starter_id, user_part=kept,
-                          default_version=default_version, default_runs=default_runs, **common)
+                          default_version=default_version, default_runs=default_runs, values=values, **common)
     importer.import_dashboard(files)
 
     defaults = [charts.chart_uuid(pid, plugin, i, v.get("title") or "") for i, v in enumerate(visualizations)]

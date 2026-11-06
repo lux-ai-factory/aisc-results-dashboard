@@ -1,8 +1,8 @@
 # AISC results dashboard
 
-The results dashboard draws the charts behind the Results of step 4 Collect evidence in AISC, the AI
+The results dashboard draws the charts behind the Results of step 4 AI Assessment Sandbox in AISC, the AI
 Assessment Sandbox Configurator (steps: 1 Qualify the AI system, 2 Set control objectives, 3 Choose tests and
-checklists, 4 Collect evidence). It runs as the compose service `dashboard` (with `dashboard-migrate` and its own
+checklists, 4 AI Assessment Sandbox). It runs as the compose service `dashboard` (with `dashboard-migrate` and its own
 cache `dashboard-redis`), on its own port, 8188 by default.
 
 It is stock Apache Superset 4.1.4, customised only through Superset's configuration file and a small Python
@@ -310,7 +310,7 @@ aisc_ext/               the extension package (mounted next to it)
   import_view.py,       Assessment > Import charts: a chart export ZIP into a tile
   chart_import.py
   cache.py              Superset's cache config: the dashboard's own Redis, with a password
-  back.py, back_view.py the menu's "← Back" to the project's Collect evidence page
+  back.py, back_view.py the menu's "← Back" to the project's AI Assessment Sandbox page
   security.py, sso.py,  role mapping, Keycloak sign-in, the AiscViewer role
   viewer_role.py
   results_db.py         the membership DSN
