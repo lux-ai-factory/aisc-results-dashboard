@@ -213,18 +213,22 @@ with app.app_context():
     def plots():
         return db.session.query(AiscReportPlot).count()
 
-    def save(name, chart_name, how=direct, who=None, hint=charts_slug, on=None):
+    def save(name, chart_name, how=direct, who=None, hint=charts_slug, on=None, **extra):
         before = plots()
         call(name, "post", "/api/v1/aisc_report_export/" + (f"?dashboard={hint}" if hint else ""), how,
              who=who, json={"dashboard_id": on or with_charts, "chart": chart_name,
-                            "svg": '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>'})
+                            "svg": '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>', **extra})
         seen[name]["rows"] = plots() - before
+        newest = db.session.query(AiscReportPlot).order_by(AiscReportPlot.id.desc()).first()
+        seen[name]["stored_rows"] = newest.rows if newest is not None and plots() > before else "nothing stored"
 
     save("export.viewer", "Pass rate by model", as_viewer, viewer)
     save("export.not_on_the_dashboard", "A plot made up")
     save("export.other_hint", "Pass rate by model", hint=f"aisc-{hex_b}-p")
     save("export.editor", "Pass rate by model")
     save("export.override_name", "Drift, named on this dashboard")
+    save("export.with_rows", "Pass rate by model", rows=2)
+    save("export.bad_rows", "Pass rate by model", rows=-1)
     save("export.admin_no_project", "Pass rate by model", as_admin, admin, hint=None, on=no_project)
 
     here = f"?dashboard={charts_slug}"
@@ -435,6 +439,13 @@ def test_an_editors_save_writes_one_row_and_one_event_of_the_project(seen):
     assert saved["status"] == 201, saved["text"][:500]
     assert saved["rows"] == 1 and [(e["pid"], e["action"]) for e in saved["events"]] == [
         (seen["A"], "dashboard.export.saved")]
+
+
+def test_a_saved_plot_keeps_the_rows_its_chart_drew_and_none_when_not_sent(seen):
+    assert seen["export.with_rows"]["status"] == 201, seen["export.with_rows"]["text"][:500]
+    assert seen["export.with_rows"]["stored_rows"] == 2
+    assert seen["export.editor"]["stored_rows"] is None
+    assert seen["export.bad_rows"]["status"] == 400 and seen["export.bad_rows"]["rows"] == 0
 
 
 @pytest.mark.parametrize("name", ["export.other_hint", "assistant.start.other_hint", "assistant.change.other_hint"])

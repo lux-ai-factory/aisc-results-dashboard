@@ -1,6 +1,7 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""What a Save to report request may hold: one plot as an SVG, its name, tab, filter tags and a comment.
+"""What a Save to report request may hold: one plot as an SVG, its name, tab, filter tags, a comment and the
+number of rows its chart drew.
 
 The SVG goes into reports, so it is checked: well formed, nothing that could run, nothing that could fetch. Pure: no
 Superset import."""
@@ -78,8 +79,17 @@ def _tags(value) -> list[str]:
     return [t.strip()[:MAX_TAG] for t in value if t.strip()]
 
 
+def _rows(value) -> int | None:
+    """The number of rows the chart drew when the plot was saved: a whole number from 0, or None when not sent."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("the rows must be a whole number from 0")
+    return value
+
+
 def read_plot(body: dict) -> dict:
-    """{svg (bytes), sha256, size, chart, tab, tags, comment}; ValueError when it cannot be kept."""
+    """{svg (bytes), sha256, size, chart, tab, tags, comment, rows}; ValueError when it cannot be kept."""
     chart = str(body.get("chart") or "").strip()
     if not chart:
         raise ValueError("the plot needs a name")
@@ -92,4 +102,5 @@ def read_plot(body: dict) -> dict:
         raise ValueError(f"the comment is too long: at most {MAX_COMMENT} characters")
     data = text.encode()
     return {"svg": data, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "chart": chart[:MAX_NAME],
-            "tab": str(body.get("tab") or "").strip()[:MAX_NAME], "tags": _tags(body.get("tags")), "comment": comment}
+            "tab": str(body.get("tab") or "").strip()[:MAX_NAME], "tags": _tags(body.get("tags")), "comment": comment,
+            "rows": _rows(body.get("rows"))}

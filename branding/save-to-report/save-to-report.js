@@ -1,6 +1,7 @@
 /* The Save to report button on a Superset dashboard. Each plot on the open tab becomes one vector file: Superset draws
    its charts with ECharts on a canvas, so the live chart's own settings are drawn again as an SVG, by ECharts. Its
-   filters are read from the filter bar as text. The person picks what to keep and can add a comment per plot. */
+   filters are read from the filter bar as text, and the rows the chart draws from row-counts.js. The person picks what to
+   keep and can add a comment per plot. */
 (function () {
   var m = location.pathname.match(/^\/superset\/dashboard\/([^/]+)/);
   if (!m) return;
@@ -148,12 +149,19 @@
     return svg;
   }
 
+  /* The rows the chart draws, as shown under it (row-counts.js), or null when no count is known. */
+  function rowsOf(dom) {
+    var slice = dom.closest('[data-test-chart-id]');
+    var n = slice && window.aiscRowCounts ? window.aiscRowCounts.of(slice.getAttribute('data-test-chart-id')) : undefined;
+    return typeof n === 'number' ? n : null;
+  }
+
   function plotsOnTheTab(lib) {
     var out = [];
     document.querySelectorAll('[_echarts_instance_]').forEach(function (dom) {
       if (!dom.offsetParent) return;
       var chart = chartOf(dom);
-      if (chart) out.push({ chart: nameOf(dom), svg: vector(lib, chart) });
+      if (chart) out.push({ chart: nameOf(dom), svg: vector(lib, chart), rows: rowsOf(dom) });
     });
     return out;
   }
@@ -214,6 +222,12 @@
       var keep = document.createElement('input');
       keep.type = 'checkbox'; keep.checked = true; keep.style.marginRight = '8px';
       label.append(keep, plot.chart);
+      if (plot.rows !== null && window.aiscRowCounts) {
+        var count = document.createElement('span');
+        count.style.cssText = 'font-weight:400;color:#8a8a8a;margin-left:8px;font-size:12px';
+        count.textContent = window.aiscRowCounts.label(plot.rows);
+        label.append(count);
+      }
       var img = document.createElement('img');
       img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(plot.svg)));
       img.style.cssText = 'display:block;max-width:100%';
@@ -239,7 +253,7 @@
         return chosen.reduce(function (done, r) {
           return done.then(function () {
             return send(token, { dashboard_id: dashboard, chart: r.plot.chart, tab: tab, tags: filterTags,
-                                 svg: r.plot.svg, comment: r.note.value });
+                                 svg: r.plot.svg, comment: r.note.value, rows: r.plot.rows });
           });
         }, Promise.resolve());
       }).then(function () {

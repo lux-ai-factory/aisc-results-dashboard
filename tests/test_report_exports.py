@@ -104,3 +104,24 @@ def test_the_names_a_saved_plot_may_take_are_those_of_the_charts_placed_on_the_d
                 "CHART-2": {"type": "CHART", "meta": {"chartId": 2, "sliceNameOverride": "Drift, renamed here"}}}
     names = placed_chart_names(position, {1: "Pass rate by model", 2: "Drift by feature", 3: "Not placed"})
     assert names == {"Pass rate by model", "Drift, renamed here", "Drift by feature"}
+
+
+def test_the_rows_the_plot_draws_are_kept_when_sent():
+    """The number of rows the chart's query gave when the plot was saved; older pages send none."""
+    assert read_plot(body())["rows"] is None
+    assert read_plot(body(rows=None))["rows"] is None
+    assert read_plot(body(rows=0))["rows"] == 0
+    assert read_plot(body(rows=2))["rows"] == 2
+
+
+@pytest.mark.parametrize("rows", [-1, 1.5, "3", True, [2], {"n": 2}])
+def test_rows_must_be_a_non_negative_whole_number(rows):
+    with pytest.raises(ValueError, match="rows"):
+        read_plot(body(rows=rows))
+
+
+def test_the_rows_column_is_added_to_a_table_made_before_it_existed():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    assert "rows = Column(Integer, nullable=True)" in (root / "aisc_ext/report_exports/model.py").read_text()
+    assert "ALTER TABLE aisc_report_plot ADD COLUMN IF NOT EXISTS rows INTEGER" in (root / "superset_config.py").read_text()

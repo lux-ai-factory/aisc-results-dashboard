@@ -172,3 +172,10 @@ def test_the_hook_loads_the_row_counts_with_their_version_before_the_button():
     version = re.search(r"row-counts\.js\?v=([0-9a-f]{12})", html)
     assert version and version.group(1) == hashlib.sha256(ROW_COUNTS.read_bytes()).hexdigest()[:12]
     assert html.index("row-counts.js") < html.index("save-to-report.js")
+
+
+def test_each_saved_plot_sends_the_rows_its_chart_draws():
+    """The count shown under the chart (row-counts.js), read for the chart the plot is drawn from."""
+    text = BUTTON.read_text()
+    assert "window.aiscRowCounts" in text and "data-test-chart-id" in text
+    assert "rows: r.plot.rows" in text

@@ -21,6 +21,8 @@ class AiscReportPlot(Model):
     svg = Column(LargeBinary, nullable=False)
     sha256 = Column(String(64), nullable=False)
     comment = Column(Text, nullable=False, default="")
+    #: the rows the chart's query gave when the plot was saved (None: saved by a page that did not send them)
+    rows = Column(Integer, nullable=True)
     author_sub = Column(String(255), nullable=False)
     author_name = Column(String(255), nullable=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)

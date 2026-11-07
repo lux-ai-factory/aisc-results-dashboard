@@ -275,8 +275,9 @@ def _install_extension(app):
         for model in (AiscComment, AiscReviewRequest, AiscMadeTile, AiscRemovedChart, AiscChangedChart,
                       AiscReportPlot):
             model.__table__.create(bind=db.engine, checkfirst=True)
-        # A deleted comment is hidden, not removed, via aisc_comment.deleted_at.
-        # Tables created before that column existed get it here. The ledger
+        # A deleted comment is hidden, not removed, via aisc_comment.deleted_at, and a
+        # saved plot keeps the rows its chart drew in aisc_report_plot.rows.
+        # Tables created before those columns existed get them here. The ledger
         # outbox table lives in this same metadata database.
         from sqlalchemy import text
 
@@ -288,9 +289,10 @@ def _install_extension(app):
         try:
             with db.engine.begin() as conn:
                 conn.execute(text("ALTER TABLE aisc_comment ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP"))
+                conn.execute(text("ALTER TABLE aisc_report_plot ADD COLUMN IF NOT EXISTS rows INTEGER"))
             ledger.OUTBOX.metadata.create_all(db.engine)
         except Exception:                                               # noqa: BLE001
-            logging.getLogger(__name__).exception("ledger: the comment column or the outbox was not made here")
+            logging.getLogger(__name__).exception("ledger: the added columns or the outbox were not made here")
         # Review requests posted with a dashboard's slug were stored under it by older code; they
         # move to the dashboard's id, as comments are keyed. Idempotent.
         try:
