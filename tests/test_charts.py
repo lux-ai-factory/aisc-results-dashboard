@@ -149,7 +149,7 @@ def test_a_radar_has_an_axis_per_value_and_a_polygon_per_run(charts):
     assert viz_type == "radar" and params["groupby"] == ["run"]
     assert [m["label"] for m in params["metrics"]] == ["cv", "health"]
     assert params["metrics"][0] == {"expressionType": "SQL", "label": "cv",
-                                    "sqlExpression": "AVG(CASE WHEN category = 'cv' THEN score END)"}
+                                    "sqlExpression": "AVG(CASE WHEN \"category\" = 'cv' THEN \"score\" END)"}
     assert filters_of(params)[("metric", "IN")] == ["Jailbreak success"]
     assert filters_of(params)[("tool", "==")] == "StrongREJECT (Mijke)"
 
@@ -166,7 +166,7 @@ def test_a_value_with_a_quote_cannot_break_the_axis_sql(charts):
     radar = charts.with_radars([CATEGORY_BARS])[1]
     _, params, _ = charts.chart_settings(radar, plugin_label="x", columns=RADAR_COLUMNS,
                                          values={"category": ["it's"]})
-    assert params["metrics"][0]["sqlExpression"] == "AVG(CASE WHEN category = 'it''s' THEN score END)"
+    assert params["metrics"][0]["sqlExpression"] == "AVG(CASE WHEN \"category\" = 'it''s' THEN \"score\" END)"
 
 
 def test_a_radar_with_no_values_yet_is_drawn_as_a_table(charts):
@@ -445,3 +445,14 @@ def test_the_superset_format_module_depends_on_no_assistant_code():
     tree = ast.parse((Path(__file__).resolve().parents[1] / "aisc_ext" / "charts.py").read_text())
     imported = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module]
     assert not [m for m in imported if m.startswith("aisc_ext.assistant")]
+
+
+def test_a_plugin_radar_reads_its_dimension_and_the_score_as_quoted_column_names(charts):
+    """Both radars (a plugin's and the chart assistant's) are written by one radar_metrics: a column name keeps its
+    capitals and a quote in an axis stays inside the text."""
+    v = viz("radar", ["m"], group_by_dimensions=["Model"], title="t")
+    _, params, _ = charts.chart_settings(v, plugin_label="P", columns=COLUMNS + ["Model"],
+                                         values={"Model": ["it's", "b"]})
+    assert params["metrics"][0]["sqlExpression"] == 'AVG(CASE WHEN "Model" = \'it\'\'s\' THEN "score" END)'
+    assert charts.radar_metrics("Model", "Pass rate", ["m"], aggregate="MAX")[0]["sqlExpression"] == \
+        'MAX(CASE WHEN "Model" = \'m\' THEN "Pass rate" END)'

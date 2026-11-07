@@ -12,7 +12,7 @@ import hashlib
 import uuid
 
 from aisc_ext import charts
-from aisc_ext.charts import changed_params, kind_of, plot_definition  # noqa: F401 - re-exported
+from aisc_ext.charts import changed_params, kind_of, plot_definition, quoted_name  # noqa: F401 - re-exported
 
 MAX_LABELS = 50
 MAX_LABEL_LENGTH = 60
@@ -84,16 +84,6 @@ def may_validate(roles, project_hex: str) -> bool:
     return "Admin" in roles or f"AiscProjectEditor_{project_hex}" in roles
 
 
-def _quoted(value) -> str:
-    return "'" + str(value).replace("'", "''") + "'"
-
-
-def quoted_name(name) -> str:
-    """A result column the model named, as one SQL identifier: whatever text its alias holds stays a column name
-    (never SQL the assistant's query check did not see), with its capitals and spaces kept."""
-    return '"' + str(name).replace('"', '""') + '"'
-
-
 def distinct_sql(category, sql: str) -> str:
     """The query of a radar's axes: the category's values in the validated query's result."""
     return f"SELECT DISTINCT {quoted_name(category)} FROM ({sql}) AS v ORDER BY 1"
@@ -105,10 +95,7 @@ def chart_params(chart: dict, *, axes) -> dict:
     groupby = [series] if series else []
     kind = chart["kind"]
     if kind == "radar":
-        when, then = quoted_name(category), quoted_name(value)
-        metrics = [{"expressionType": "SQL", "label": str(a),
-                    "sqlExpression": f"MAX(CASE WHEN {when} = {_quoted(a)} THEN {then} END)"} for a in axes]
-        return {"viz_type": "radar", "groupby": groupby, "metrics": metrics, "adhoc_filters": [], "row_limit": 1000,
+        return {"viz_type": "radar", "groupby": groupby, "metrics": charts.radar_metrics(category, value, axes, aggregate="MAX"), "adhoc_filters": [], "row_limit": 1000,
                 "show_legend": True, "legendOrientation": "bottom", "number_format": "SMART_NUMBER",
                 "column_config": {}}
     if kind in ("bar", "line"):

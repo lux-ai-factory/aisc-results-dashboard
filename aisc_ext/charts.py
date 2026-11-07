@@ -85,6 +85,20 @@ def _quoted(value) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def quoted_name(name) -> str:
+    """A column name as one SQL identifier: whatever text it holds stays a column name (never SQL of its own), with
+    its capitals and spaces kept."""
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def radar_metrics(column, value, axes, *, aggregate: str = "AVG") -> list[dict]:
+    """A radar's metrics: one per axis, the aggregate of value over the rows whose column holds that axis. Both
+    names are quoted as identifiers, each axis as text, so neither can carry SQL."""
+    when, then = quoted_name(column), quoted_name(value)
+    return [{"expressionType": "SQL", "label": str(a),
+             "sqlExpression": f"{aggregate}(CASE WHEN {when} = {_quoted(a)} THEN {then} END)"} for a in axes]
+
+
 def chart_settings(v: dict, *, plugin_label: str, columns, values: dict | None = None) -> tuple[str, dict, str]:
     """(Superset chart type, its settings, its description) for one MetricVisualization (as a dict). values:
     each dimension's values in the results, a radar's axes (a radar with none yet is drawn as a table)."""
@@ -106,10 +120,8 @@ def chart_settings(v: dict, *, plugin_label: str, columns, values: dict | None =
     axes = list((values or {}).get(groups[0], [])) if kind == "radar" and groups else []
     if axes:
         viz_type = "radar"
-        params = {"groupby": ["run"], "metrics": [
-            {"expressionType": "SQL", "label": str(a),
-             "sqlExpression": f"AVG(CASE WHEN {groups[0]} = {_quoted(a)} THEN score END)"} for a in axes],
-            "show_legend": True, "legendOrientation": "top", "column_config": {}}
+        params = {"groupby": ["run"], "metrics": radar_metrics(groups[0], "score", axes),
+                  "show_legend": True, "legendOrientation": "top", "column_config": {}}
     elif viz_type == "echarts_timeseries_bar":
         x_axis = groups[0] if groups else "metric"
         series = label or ("metric" if x_axis != "metric" else None)
