@@ -91,6 +91,22 @@ def test_the_validated_chart_reads_exactly_the_validated_query_on_the_projects_c
     assert "Mean by category" in chart and hashlib.sha256(SQL.encode()).hexdigest()[:12] in chart
 
 
+def test_the_validated_bundle_is_written_in_the_one_superset_format_of_charts_py(monkeypatch):
+    """A format change made in charts.py (here its file version) reaches the assistant's bundle too."""
+    import yaml
+
+    from aisc_ext import charts
+    monkeypatch.setattr(charts, "_VERSION", "9.9.9")
+    source = {"database_uuid": "db-uuid", "database_name": "project db", "sqlalchemy_uri": "postgresql://x"}
+    files = validated_files(source, pid="0b5446b0-3bcf-4747-9a47-996747111b86", sql=SQL,
+                            fingerprint=hashlib.sha256(SQL.encode()).hexdigest(),
+                            chart={"kind": "bar", "title": "Mean by category", "category": "category", "value": "value"},
+                            columns=["category", "series", "value"], axes=[], description="the mean", author="admin")
+    assert {yaml.safe_load(v)["version"] for v in files.values()} == {"9.9.9"}
+    dataset = yaml.safe_load(next(v for k, v in files.items() if k.startswith("datasets/")))
+    assert dataset["metrics"] == [] and "the mean" in dataset["description"]
+
+
 def test_a_query_changed_after_validation_is_refused():
     with pytest.raises(ValueError, match="fingerprint"):
         validated_files({"database_uuid": "d", "database_name": "n", "sqlalchemy_uri": "u"}, pid="p", sql=SQL + " ",

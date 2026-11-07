@@ -60,7 +60,7 @@ def rewrite(data: bytes, *, pid: str, source: dict) -> tuple[dict[str, str], lis
     if meta.get("type") != "Slice":
         raise ValueError("this is not a chart export: export charts (one or several), not a dashboard or a dataset")
     out = {"metadata.yaml": files["metadata.yaml"]}
-    out.update(aisc_charts._source_files(**source))
+    out.update(aisc_charts.source_files(**source))
     imported = []
     for path, text in files.items():
         if not path.startswith("charts/"):

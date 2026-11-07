@@ -208,9 +208,17 @@ def _dump(obj) -> str:
     return yaml.safe_dump(obj, sort_keys=False, allow_unicode=True)
 
 
-def _source_files(*, dataset_uuid, dataset_name, database_uuid, database_name, sqlalchemy_uri, columns) -> dict:
+def metadata(kind: str) -> str:
+    """The metadata.yaml of an export bundle: kind "Dashboard" or "Slice"."""
+    return _dump({"version": _VERSION, "type": kind, "timestamp": _TIMESTAMP})
+
+
+def source_files(*, dataset_uuid, dataset_name, database_uuid, database_name, sqlalchemy_uri, columns, sql=None,
+                 description=None, metrics=None) -> dict:
     """The connection and the dataset, by their uuids. Superset imports both with overwrite=False whatever
-    the command says (v1/__init__.py), so these only have to pass its schema: what is stored stays."""
+    the command says (v1/__init__.py), so these only have to pass its schema: what is stored stays.
+    sql makes a virtual dataset (the chart assistant's validated query); metrics: the dataset's saved metrics
+    (dataset_metrics() when not given)."""
     db_file = "".join(ch if ch.isalnum() else "_" for ch in database_name)
     return {
         f"databases/{db_file}.yaml": _dump({
@@ -219,20 +227,20 @@ def _source_files(*, dataset_uuid, dataset_name, database_uuid, database_name, s
             "allow_ctas": False, "allow_cvas": False, "allow_dml": False, "allow_file_upload": False,
             "extra": {}}),
         f"datasets/{db_file}/{dataset_name}.yaml": _dump({
-            "table_name": dataset_name, "main_dttm_col": None, "description": None, "default_endpoint": None,
-            "offset": 0, "cache_timeout": None, "schema": None, "sql": None, "params": None,
+            "table_name": dataset_name, "main_dttm_col": None, "description": description, "default_endpoint": None,
+            "offset": 0, "cache_timeout": None, "schema": None, "sql": sql, "params": None,
             "template_params": None, "filter_select_enabled": True, "fetch_values_predicate": None,
             "extra": None, "uuid": dataset_uuid, "database_uuid": database_uuid, "version": _VERSION,
             "metrics": [{"metric_name": m["metric_name"], "verbose_name": None, "metric_type": None,
                          "expression": m["expression"], "description": None, "d3format": None, "extra": {},
-                         "warning_text": None} for m in dataset_metrics()],
+                         "warning_text": None} for m in (dataset_metrics() if metrics is None else metrics)],
             "columns": [{"column_name": c, "verbose_name": None, "is_dttm": False, "is_active": True,
                          "type": None, "groupby": True, "filterable": True, "expression": None,
                          "description": None, "python_date_format": None, "extra": {}} for c in columns]}),
     }
 
 
-def _chart_file(*, chart_id, name, viz_type, params, description, dataset_uuid) -> str:
+def chart_file(*, chart_id, name, viz_type, params, description, dataset_uuid) -> str:
     return _dump({"slice_name": name, "description": description, "certified_by": None,
                   "certification_details": None, "viz_type": viz_type, "params": params, "query_context": None,
                   "cache_timeout": None, "uuid": chart_id, "version": _VERSION, "dataset_uuid": dataset_uuid})
@@ -374,8 +382,8 @@ def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset
            default_version=None, default_runs=(), values=None, skip=frozenset(), changed=None) -> dict:
     """The export bundle of one plugin's dashboard in one project: {path in the ZIP: YAML text}. The tile opens
     on default_version and default_runs (native_filters); no default run means the plugin has not run yet."""
-    files = {"metadata.yaml": _dump({"version": _VERSION, "type": "Dashboard", "timestamp": _TIMESTAMP})}
-    files.update(_source_files(dataset_uuid=dataset_uuid, dataset_name=dataset_name, database_uuid=database_uuid,
+    files = {"metadata.yaml": metadata("Dashboard")}
+    files.update(source_files(dataset_uuid=dataset_uuid, dataset_name=dataset_name, database_uuid=database_uuid,
                                database_name=database_name, sqlalchemy_uri=sqlalchemy_uri, columns=columns))
     placed = []
     for v, cid in zip(visualizations, default_uuids(pid, plugin, visualizations)):
@@ -390,7 +398,7 @@ def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset
             except ValueError as exc:                   # the default no longer takes it: only its name is kept
                 _log.warning("chart %s of %s keeps only its name: %s", cid, plugin, exc)
             name = changes.get("title") or name
-        files[f"charts/{cid}.yaml"] = _chart_file(chart_id=cid, name=name, viz_type=viz_type, params=params,
+        files[f"charts/{cid}.yaml"] = chart_file(chart_id=cid, name=name, viz_type=viz_type, params=params,
                                                   description=description, dataset_uuid=dataset_uuid)
         placed.append((cid, name, viz_type))
     files[f"dashboards/{dashboard_uuid(pid, plugin)}.yaml"] = _dump({
@@ -414,8 +422,8 @@ def starter_bundle(*, pid, plugin, label, dataset_uuid, dataset_name, database_u
     """The starter chart of one plugin's dashboard: a table of its results, kept off the dashboard, which the
     "+ Build a chart of your own" link opens. Save as makes the user's own chart: no aisc_chart_id, so AISC
     never touches it."""
-    files = {"metadata.yaml": _dump({"version": _VERSION, "type": "Slice", "timestamp": _TIMESTAMP})}
-    files.update(_source_files(dataset_uuid=dataset_uuid, dataset_name=dataset_name, database_uuid=database_uuid,
+    files = {"metadata.yaml": metadata("Slice")}
+    files.update(source_files(dataset_uuid=dataset_uuid, dataset_name=dataset_name, database_uuid=database_uuid,
                                database_name=database_name, sqlalchemy_uri=sqlalchemy_uri, columns=columns))
     params = {"viz_type": "table", "query_mode": "raw",
               "all_columns": [c for c in ("run", "target_label", "metric", "feature", "concern", "score", "statistic",
@@ -423,7 +431,7 @@ def starter_bundle(*, pid, plugin, label, dataset_uuid, dataset_name, database_u
               "adhoc_filters": [_filter("tool", "==", label)], "row_limit": 1000, "aisc_starter": plugin,
               "aisc_project": pid}
     cid = starter_uuid(pid, plugin)
-    files[f"charts/{cid}.yaml"] = _chart_file(
+    files[f"charts/{cid}.yaml"] = chart_file(
         chart_id=cid, name=f"New chart · {label}", viz_type="table", params=params, dataset_uuid=dataset_uuid,
         description=f"A starting point on this project's {label} results. Change it, then Save as a new chart.")
     return files

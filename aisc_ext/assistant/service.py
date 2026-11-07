@@ -11,16 +11,13 @@ from __future__ import annotations
 import hashlib
 import uuid
 
-import yaml
-
+from aisc_ext import charts
 from aisc_ext.charts import changed_params, kind_of, plot_definition  # noqa: F401 - re-exported
 
 MAX_LABELS = 50
 MAX_LABEL_LENGTH = 60
 HEADER_TEXT = "Assistant charts"
 _NS = uuid.UUID("8b1f3f0e-6c3e-4c56-9d7a-2a1e4b6c9d10")
-_VERSION = "1.0.0"
-_dump = lambda o: yaml.safe_dump(o, sort_keys=False, allow_unicode=True)
 
 
 def description_from(targets, rows, ranges=None) -> dict:
@@ -132,31 +129,18 @@ def validated_files(source: dict, *, pid: str, sql: str, fingerprint: str, chart
     hexed = pid.replace("-", "")
     dataset_uuid = str(uuid.uuid5(_NS, f"{pid}/dataset/{fingerprint}"))
     chart_uuid = str(uuid.uuid5(_NS, f"{pid}/chart/{fingerprint}/{chart.get('kind')}/{chart.get('title')}"))
-    db_file = "".join(ch if ch.isalnum() else "_" for ch in source["database_name"])
     dataset_name = f"assistant_{fingerprint[:12]}_{hexed}"
     note = (f"Made with the chart assistant; validated by {author}. Query fingerprint {fingerprint[:12]}. "
             f"{description}").strip()
-    return {
-        "metadata.yaml": _dump({"version": _VERSION, "type": "Slice", "timestamp": "2026-11-06T00:00:00+00:00"}),
-        f"databases/{db_file}.yaml": _dump({
-            "database_name": source["database_name"], "sqlalchemy_uri": source["sqlalchemy_uri"],
-            "uuid": source["database_uuid"], "version": _VERSION, "cache_timeout": None, "expose_in_sqllab": False,
-            "allow_run_async": False, "allow_ctas": False, "allow_cvas": False, "allow_dml": False,
-            "allow_file_upload": False, "extra": {}}),
-        f"datasets/{db_file}/{dataset_name}.yaml": _dump({
-            "table_name": dataset_name, "main_dttm_col": None, "description": note, "default_endpoint": None,
-            "offset": 0, "cache_timeout": None, "schema": None, "sql": sql, "params": None, "template_params": None,
-            "filter_select_enabled": True, "fetch_values_predicate": None, "extra": None, "uuid": dataset_uuid,
-            "database_uuid": source["database_uuid"], "version": _VERSION, "metrics": [],
-            "columns": [{"column_name": c, "verbose_name": None, "is_dttm": False, "is_active": True, "type": None,
-                         "groupby": True, "filterable": True, "expression": None, "description": None,
-                         "python_date_format": None, "extra": {}} for c in columns]}),
-        f"charts/{chart_uuid}.yaml": _dump({
-            "slice_name": chart["title"], "description": note, "certified_by": None, "certification_details": None,
-            "viz_type": chart_params(chart, axes=axes)["viz_type"], "params": chart_params(chart, axes=axes),
-            "query_context": None, "cache_timeout": None, "uuid": chart_uuid, "version": _VERSION,
-            "dataset_uuid": dataset_uuid}),
-    }
+    params = chart_params(chart, axes=axes)
+    return {"metadata.yaml": charts.metadata("Slice"),
+            **charts.source_files(dataset_uuid=dataset_uuid, dataset_name=dataset_name,
+                                  database_uuid=source["database_uuid"], database_name=source["database_name"],
+                                  sqlalchemy_uri=source["sqlalchemy_uri"], columns=columns, sql=sql, description=note,
+                                  metrics=[]),
+            f"charts/{chart_uuid}.yaml": charts.chart_file(chart_id=chart_uuid, name=chart["title"],
+                                                           viz_type=params["viz_type"], params=params,
+                                                           description=note, dataset_uuid=dataset_uuid)}
 
 
 def chart_uuid_of(files: dict) -> str:
