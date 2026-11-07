@@ -43,8 +43,9 @@ def test_the_button_sends_the_picture_with_the_csrf_token_to_the_export_route():
     assert "/api/v1/aisc_report_export/" in text and "X-CSRFToken" in text and "same-origin" in text
 
 
-def test_the_people_who_may_comment_may_save_to_the_report():
-    """A new API has no permission until a role is given one: without this every save answers Forbidden."""
+def test_the_save_route_is_granted_to_the_roles_that_open_dashboards():
+    """A new API has no permission until a role is given one: without this every save answers Forbidden. The route
+    itself then admits only a project's editors and admins."""
     source = (HERE / "superset_config.py").read_text()
     assert '"ReportExportApi": ("can_post",)' in source
 

@@ -56,6 +56,20 @@ def _check_svg(text) -> None:
                 raise ValueError("the SVG must not point outside itself")
 
 
+def placed_chart_names(position: dict, slice_names: dict) -> set[str]:
+    """The names a saved plot may take on a dashboard: each chart placed in its layout, by its own name (slice_names:
+    chart id -> name) and by the name the dashboard gives it there."""
+    names = set()
+    for node in position.values():
+        if isinstance(node, dict) and node.get("type") == "CHART":
+            meta = node.get("meta") or {}
+            if meta.get("chartId") in slice_names:
+                names.add(slice_names[meta["chartId"]])
+                if meta.get("sliceNameOverride"):
+                    names.add(meta["sliceNameOverride"])
+    return {n.strip() for n in names if n and n.strip()}
+
+
 def _tags(value) -> list[str]:
     if value is None:
         return []

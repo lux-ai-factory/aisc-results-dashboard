@@ -3,7 +3,7 @@ import hashlib
 
 import pytest
 
-from aisc_ext.report_exports.service import MAX_BYTES, MAX_COMMENT, read_plot
+from aisc_ext.report_exports.service import MAX_BYTES, MAX_COMMENT, placed_chart_names, read_plot
 
 SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><path d="M0 0L1 1"/><text x="1" y="1">Age</text></svg>'
 
@@ -95,3 +95,12 @@ def test_tags_must_be_a_short_list_of_text():
     with pytest.raises(ValueError, match="tags"):
         read_plot(body(tags=[{"a": 1}]))
     assert len(read_plot(body(tags=["  a  ", "", "b"]))["tags"]) == 2
+
+
+def test_the_names_a_saved_plot_may_take_are_those_of_the_charts_placed_on_the_dashboard():
+    """The chart's own name, or the name the dashboard gives it; a chart linked but not placed does not count."""
+    position = {"ROOT_ID": {"type": "ROOT", "children": ["GRID_ID"]},
+                "CHART-1": {"type": "CHART", "meta": {"chartId": 1}},
+                "CHART-2": {"type": "CHART", "meta": {"chartId": 2, "sliceNameOverride": "Drift, renamed here"}}}
+    names = placed_chart_names(position, {1: "Pass rate by model", 2: "Drift by feature", 3: "Not placed"})
+    assert names == {"Pass rate by model", "Drift, renamed here", "Drift by feature"}

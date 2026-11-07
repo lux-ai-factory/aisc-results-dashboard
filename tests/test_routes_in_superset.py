@@ -351,6 +351,17 @@ def test_an_import_into_another_projects_tile_or_a_planted_dashboard_is_403(seen
 
 # Save to report and the chart assistant: who may write, on which project, with its ledger event
 
+def test_a_viewer_may_not_save_a_plot_to_the_report(seen):
+    assert seen["export.viewer"]["status"] == 403
+    assert seen["export.viewer"]["rows"] == 0 and seen["export.viewer"]["events"] == []
+
+
+def test_a_saved_plot_must_name_a_chart_placed_on_the_dashboard(seen):
+    assert seen["export.not_on_the_dashboard"]["status"] == 400, seen["export.not_on_the_dashboard"]["text"][:500]
+    assert seen["export.not_on_the_dashboard"]["rows"] == 0
+    assert seen["export.override_name"]["status"] == 201       # the name the dashboard gives the chart counts too
+
+
 def test_an_editors_save_writes_one_row_and_one_event_of_the_project(seen):
     saved = seen["export.editor"]
     assert saved["status"] == 201, saved["text"][:500]
