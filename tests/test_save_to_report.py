@@ -35,7 +35,7 @@ def test_the_hook_renders_with_nothing_but_what_an_including_page_gives_it():
     env = jinja2.Environment(undefined=jinja2.StrictUndefined)
     html = env.from_string(HOOK.read_text()).render(csp_nonce=lambda: "the-nonce", assets_prefix="")
     assert 'nonce="the-nonce"' in html
-    assert env.from_string(HOOK.read_text()).render(assets_prefix="").count("<script") == 2      # no Talisman: no nonce
+    assert env.from_string(HOOK.read_text()).render(assets_prefix="").count("<script") == 3      # no Talisman: no nonce
 
 
 def test_the_button_sends_the_picture_with_the_csrf_token_to_the_export_route():
@@ -160,3 +160,15 @@ def test_every_write_of_the_button_and_the_panel_names_the_dashboards_slug_for_t
         text = script.read_text()
         assert "'?dashboard=' + encodeURIComponent(" in text, script.name
         assert "result.slug" in text, script.name
+
+
+ROW_COUNTS = HERE / "branding" / "save-to-report" / "row-counts.js"
+
+
+def test_the_hook_loads_the_row_counts_with_their_version_before_the_button():
+    """The counts are read from the answers the dashboard receives: the script that watches them comes first."""
+    import re
+    html = HOOK.read_text()
+    version = re.search(r"row-counts\.js\?v=([0-9a-f]{12})", html)
+    assert version and version.group(1) == hashlib.sha256(ROW_COUNTS.read_bytes()).hexdigest()[:12]
+    assert html.index("row-counts.js") < html.index("save-to-report.js")
