@@ -78,9 +78,13 @@ def _number(value):
     return int(value) if float(value).is_integer() else float(value)
 
 
-def may_validate(roles, project_hex: str) -> bool:
-    """Validating is an editor's or an admin's act (D3)."""
-    return "Admin" in roles or f"AiscProjectEditor_{project_hex}" in roles
+def may_validate(roles, pid) -> bool:
+    """Validating, changing or removing a plot is an editor's or an admin's act: an Admin, or a person holding the
+    project's editor role (projects.editor_role_name). No project (None): an Admin only."""
+    from aisc_ext.projects import editor_role_name
+
+    roles = set(roles or [])
+    return "Admin" in roles or (pid is not None and editor_role_name(pid) in roles)
 
 
 def distinct_sql(category, sql: str) -> str:

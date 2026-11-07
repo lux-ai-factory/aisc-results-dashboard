@@ -48,7 +48,7 @@ class ReportExportApi(BaseApi):
             return self.response_400(message=problem)
         user = g.user
         pid = ledger.project_for(dashboard, user)
-        if not may_validate({r.name for r in user.roles}, (pid or "").replace("-", "")):
+        if not may_validate({r.name for r in user.roles}, pid):
             return self.response(403, message="Only an editor or an admin of the project can save a plot to the report.")
         try:
             plot = read_plot(body)

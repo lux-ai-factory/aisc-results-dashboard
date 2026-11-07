@@ -238,17 +238,19 @@ class AssistantApi(BaseApi):
         dashboard, pid, refused = self._project(dashboard_id)
         if refused:
             return refused
+        # anyone who may open the dashboard asks; whether this person may change or remove is decided before the call
+        editor = may_validate({r.name for r in g.user.roles}, pid)
         made = _plots_on(dashboard)
         status, data = _assistant(f"/v1/conversations/{cid}/messages",
                                   {"text": (request.json or {}).get("text", ""), "charts": made})
         if status == 200 and "change" in data:
-            return self._apply_change(dashboard, pid, made, data["change"], action="dashboard.assistant.changed")
+            return self._apply_change(dashboard, pid, made, data["change"], editor=editor)
         if status != 200 or "remove" not in data:
             return self.response(status, **data)
         plots = to_remove(data["remove"], made)
         if plots is None:
             return self.response(409, message="Only plots on this dashboard can be removed.")
-        if not may_validate({r.name for r in g.user.roles}, pid.replace("-", "")):
+        if not editor:
             return self.response(403, message="Only an editor or an admin of the project can remove a plot.")
         for chart_id, title in plots:
             fresh = _take_off(dashboard.id, chart_id)
@@ -259,13 +261,13 @@ class AssistantApi(BaseApi):
         _send_queued()
         return self.response(200, removed=[{"chart": c, "title": t} for c, t in plots])
 
-    def _apply_change(self, dashboard, pid, plots, asked, *, action):
+    def _apply_change(self, dashboard, pid, plots, asked, *, editor):
         from superset import db
 
         found = to_change(asked, plots)
         if found is None:
             return self.response(409, message="Only plots on this dashboard can be changed.")
-        if not may_validate({r.name for r in g.user.roles}, pid.replace("-", "")):
+        if not editor:
             return self.response(403, message="Only an editor or an admin of the project can change a plot.")
         chart_id, changes = found
         try:
@@ -273,7 +275,7 @@ class AssistantApi(BaseApi):
         except ValueError as exc:
             db.session.rollback()
             return self.response(409, message=f"That plot cannot be changed that way: {exc}.")
-        ledger.emit(db.session.connection(), pid, action,
+        ledger.emit(db.session.connection(), pid, "dashboard.assistant.changed",
                     ledger.assistant_changed(chart_id, slug=dashboard.slug, changes=changes, before=before, after=after,
                                              request=ledger.request_id(request.headers, request.environ)))
         db.session.commit()
@@ -303,7 +305,7 @@ class AssistantApi(BaseApi):
         dashboard, pid, refused = self._project(dashboard_id)
         if refused:
             return refused
-        if not may_validate({r.name for r in g.user.roles}, pid.replace("-", "")):
+        if not may_validate({r.name for r in g.user.roles}, pid):
             return self.response_403()
         status, chosen = _assistant(f"/v1/conversations/{cid}/validate",
                                     {key: (request.json or {})[key] for key in ("fingerprint", "proposal")
