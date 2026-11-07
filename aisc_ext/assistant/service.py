@@ -176,7 +176,7 @@ def made_chart_ids(position: dict) -> list[int]:
 
 def to_remove(asked, made: list[dict]) -> list[tuple[int, str]] | None:
     """The plots to take off, as (number, title) with the dashboard's own titles, when every plot the assistant named is
-    one it made on this dashboard; None otherwise (nothing is removed)."""
+    on this dashboard (made: every chart placed there, whoever made it); None otherwise (nothing is removed)."""
     titles = {c["id"]: c["title"] for c in made}
     if not isinstance(asked, list) or not asked:
         return None
