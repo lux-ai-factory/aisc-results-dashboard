@@ -567,7 +567,7 @@ def test_a_renamed_tile_is_remembered_under_its_new_name(tiles, charts):
 def _take_off(s, slug, chart_uuid):
     """What the chart assistant does on "delete it": the chart leaves the layout and the dashboard, stays in Superset,
     and the dashboard remembers it was removed."""
-    from aisc_ext.assistant.service import without_chart
+    from aisc_ext.charts import without_chart
     d = s.dashboards[slug]
     d["position"] = without_chart(d["position"], s.charts[chart_uuid]["id"], any_chart=True)
     d["slices"].discard(s.charts[chart_uuid]["id"])
@@ -590,7 +590,7 @@ def test_a_default_chart_removed_with_the_assistant_is_not_put_back_by_a_sync(ti
 
 
 def test_the_assistants_plots_stay_on_a_plugin_dashboard_through_a_sync(tiles, charts):
-    from aisc_ext.assistant.service import place_chart
+    from aisc_ext.charts import place_chart
     s = Superset()
     slug = charts.plugin_slug(PID, PLUGIN)
     sync(tiles, s)

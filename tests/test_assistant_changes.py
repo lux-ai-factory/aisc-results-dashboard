@@ -98,13 +98,3 @@ def test_a_change_from_the_assistant_is_taken_only_for_a_plot_on_the_dashboard()
     assert to_change("126", plots) is None
 
 
-def test_a_new_query_can_take_the_place_of_a_plot_the_assistant_did_not_make():
-    from aisc_ext.assistant.service import place_chart, plots_on
-    position = {"DASHBOARD_VERSION_KEY": "v2", "ROOT_ID": {"type": "ROOT", "id": "ROOT_ID", "children": ["GRID_ID"]},
-                "GRID_ID": {"type": "GRID", "id": "GRID_ID", "children": ["ROW-d"], "parents": ["ROOT_ID"]},
-                "ROW-d": {"type": "ROW", "id": "ROW-d", "children": ["CHART-aisc-d1"], "parents": ["ROOT_ID", "GRID_ID"]},
-                "CHART-aisc-d1": {"type": "CHART", "id": "CHART-aisc-d1", "children": [],
-                                  "parents": ["ROOT_ID", "GRID_ID", "ROW-d"], "meta": {"chartId": 126, "uuid": "d"}}}
-    out = place_chart(position, chart_id=140, chart_uuid="n-1", name="per run", replaces=126, any_chart=True)
-    assert plots_on(out) == [(140, True)]
-    assert out["ROW-d"]["children"] == ["CHART-aisc-assistant-n-1"]

@@ -5,9 +5,8 @@ import hashlib
 import pytest
 
 from aisc_ext.assistant.service import (MAX_LABELS, chart_params, description_from, distinct_sql, kind_of,
-                                        made_chart_ids, may_validate, to_remove,
-                                        validated_files, without_chart,
-                                        place_chart)
+                                        may_validate, to_remove,
+                                        validated_files)
 
 SQL = "SELECT dimensions->>'category' AS category, 'x' AS series, avg(score) AS value FROM engine.aisc_backend_measurement GROUP BY 1"
 
@@ -115,18 +114,6 @@ def test_a_query_changed_after_validation_is_refused():
                         columns=["category"], axes=[], description="", author="a")
 
 
-def test_the_chart_goes_under_assistant_charts_on_the_dashboard():
-    position = {"DASHBOARD_VERSION_KEY": "v2", "ROOT_ID": {"type": "ROOT", "id": "ROOT_ID", "children": ["GRID_ID"]},
-                "GRID_ID": {"type": "GRID", "id": "GRID_ID", "children": [], "parents": ["ROOT_ID"]}}
-    out = place_chart(position, chart_id=77, chart_uuid="u-1", name="Mean by category")
-    header = [n for n in out.values() if isinstance(n, dict) and n.get("type") == "HEADER"]
-    assert header and header[0]["meta"]["text"] == "Assistant charts"
-    charts = [n for n in out.values() if isinstance(n, dict) and n.get("type") == "CHART"]
-    assert charts[0]["meta"]["chartId"] == 77 and charts[0]["meta"]["uuid"] == "u-1"
-    again = place_chart(out, chart_id=78, chart_uuid="u-2", name="Second")
-    assert sum(1 for n in again.values() if isinstance(n, dict) and n.get("type") == "HEADER") == 1
-
-
 def test_each_metric_carries_the_range_of_its_first_run_and_numbers_without_a_list_their_range():
     rows = [("Jailbreak success", "category", ["cv", "health"], 2, False, 5.0),
             ("Jailbreak success", "turns", ["1", "2"] * 30, 60, True, 1.0)]
@@ -154,58 +141,6 @@ def test_the_dashboard_side_imports_only_what_the_dashboard_image_has():
 
 # ── the assistant's own plots: changed in place, removed ──
 
-def _dashboard_with_two_made_plots():
-    position = {"DASHBOARD_VERSION_KEY": "v2", "ROOT_ID": {"type": "ROOT", "id": "ROOT_ID", "children": ["GRID_ID"]},
-                "GRID_ID": {"type": "GRID", "id": "GRID_ID", "children": ["ROW-mine"], "parents": ["ROOT_ID"]},
-                "ROW-mine": {"type": "ROW", "id": "ROW-mine", "children": ["CHART-mine"], "parents": ["ROOT_ID", "GRID_ID"]},
-                "CHART-mine": {"type": "CHART", "id": "CHART-mine", "children": [],
-                               "parents": ["ROOT_ID", "GRID_ID", "ROW-mine"], "meta": {"chartId": 5, "uuid": "u-0"}}}
-    out = place_chart(position, chart_id=77, chart_uuid="u-1", name="First")
-    return place_chart(out, chart_id=78, chart_uuid="u-2", name="Second")
-
-
-def _charts(position):
-    return [n["meta"]["chartId"] for n in position.values() if isinstance(n, dict) and n.get("type") == "CHART"]
-
-
-def test_the_plots_it_made_are_only_those_under_assistant_charts():
-    assert made_chart_ids(_dashboard_with_two_made_plots()) == [77, 78]
-
-
-def test_removing_a_plot_takes_it_and_its_row_off_and_leaves_the_others_where_they_were():
-    position = _dashboard_with_two_made_plots()
-    out = without_chart(position, 77)
-    assert sorted(_charts(out)) == [5, 78]
-    grid = out["GRID_ID"]["children"]
-    assert all(child in out for child in grid)
-    assert grid == [c for c in position["GRID_ID"]["children"] if c in out]
-    assert "HEADER-aisc-assistant" in out
-
-
-def test_removing_the_last_plot_it_made_takes_the_header_off_too():
-    out = without_chart(without_chart(_dashboard_with_two_made_plots(), 77), 78)
-    assert _charts(out) == [5] and "HEADER-aisc-assistant" not in out
-    assert "HEADER-aisc-assistant" not in out["GRID_ID"]["children"]
-
-
-def test_a_plot_that_is_not_its_own_is_not_removed_unless_any_plot_may_be():
-    position = _dashboard_with_two_made_plots()
-    assert without_chart(position, 5) == position
-
-
-def test_a_replacement_takes_the_old_plots_place():
-    position = _dashboard_with_two_made_plots()
-    out = place_chart(position, chart_id=79, chart_uuid="u-3", name="First, as bars", replaces=77)
-    assert sorted(_charts(out)) == [5, 78, 79]
-    order = [out[r]["children"][0] for r in out["GRID_ID"]["children"] if r.startswith("ROW-")]
-    assert [out[n]["meta"]["chartId"] for n in order] == [5, 79, 78]
-
-
-def test_a_replacement_of_a_plot_no_longer_there_is_added_at_the_end():
-    out = place_chart(without_chart(_dashboard_with_two_made_plots(), 77), chart_id=79, chart_uuid="u-3",
-                      name="x", replaces=77)
-    assert made_chart_ids(out) == [78, 79]
-
 
 @pytest.mark.parametrize("viz, kind", [("radar", "radar"), ("echarts_timeseries_bar", "bar"),
                                        ("echarts_timeseries_line", "line"), ("table", "table")])
@@ -221,30 +156,6 @@ def test_a_removal_is_a_ledger_event_saying_which_plot_left_which_dashboard():
     assert fields["details"] == {"dashboard": "aisc-x"} and fields["before"] == {"title": "Mean by category"}
 
 
-def _tabbed_dashboard():
-    return {"DASHBOARD_VERSION_KEY": "v2", "ROOT_ID": {"type": "ROOT", "id": "ROOT_ID", "children": ["TABS-x"]},
-            "TABS-x": {"type": "TABS", "id": "TABS-x", "children": ["TAB-a"], "parents": ["ROOT_ID"], "meta": {}},
-            "TAB-a": {"type": "TAB", "id": "TAB-a", "children": [], "parents": ["ROOT_ID", "TABS-x"],
-                      "meta": {"text": "Against the baseline"}}}
-
-
-def test_on_a_dashboard_with_tabs_its_plots_go_in_a_tab_of_their_own():
-    out = place_chart(_tabbed_dashboard(), chart_id=77, chart_uuid="u-1", name="First")
-    tabs = out["TABS-x"]["children"]
-    assert tabs[0] == "TAB-a" and len(tabs) == 2
-    tab = out[tabs[1]]
-    assert tab["type"] == "TAB" and tab["meta"]["text"] == "Assistant charts"
-    row = out[tab["children"][0]]
-    node = out[row["children"][0]]
-    assert node["meta"]["chartId"] == 77 and node["parents"] == ["ROOT_ID", "TABS-x", tabs[1], row["id"]]
-    assert made_chart_ids(out) == [77]
-
-
-def test_removing_its_last_plot_on_a_tabbed_dashboard_takes_its_tab_off():
-    out = place_chart(_tabbed_dashboard(), chart_id=77, chart_uuid="u-1", name="First")
-    assert without_chart(out, 77) == _tabbed_dashboard()
-
-
 MADE = [{"id": 77, "title": "First"}, {"id": 78, "title": "Second"}]
 
 
@@ -256,19 +167,6 @@ def test_every_plot_the_assistant_asks_to_remove_is_taken_with_its_own_title():
 def test_one_plot_not_on_the_dashboard_refuses_the_whole_removal():
     assert to_remove([{"chart": 77}, {"chart": 5}], MADE) is None
     assert to_remove([], MADE) is None and to_remove("77", MADE) is None
-
-
-
-def test_any_plot_on_the_dashboard_can_be_removed_when_asked_for_any():
-    position = _dashboard_with_two_made_plots()
-    out = without_chart(position, 5, any_chart=True)
-    assert sorted(_charts(out)) == [77, 78] and "ROW-mine" not in out
-    assert "ROW-mine" not in out["GRID_ID"]["children"]
-
-
-def test_every_plot_on_the_dashboard_is_listed_saying_which_the_assistant_made():
-    from aisc_ext.assistant.service import plots_on
-    assert plots_on(_dashboard_with_two_made_plots()) == [(5, False), (77, True), (78, True)]
 
 
 def test_the_session_keeps_only_the_most_recent_conversations():

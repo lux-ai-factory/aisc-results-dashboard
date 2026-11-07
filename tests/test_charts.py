@@ -456,3 +456,120 @@ def test_a_plugin_radar_reads_its_dimension_and_the_score_as_quoted_column_names
     assert params["metrics"][0]["sqlExpression"] == 'AVG(CASE WHEN "Model" = \'it\'\'s\' THEN "score" END)'
     assert charts.radar_metrics("Model", "Pass rate", ["m"], aggregate="MAX")[0]["sqlExpression"] == \
         'MAX(CASE WHEN "Model" = \'m\' THEN "Pass rate" END)'
+
+
+# ── the chart assistant's plots in a dashboard's layout ──
+
+from aisc_ext.charts import made_chart_ids, place_chart, plots_on, without_chart  # noqa: E402
+
+
+def test_the_chart_goes_under_assistant_charts_on_the_dashboard():
+    position = {"DASHBOARD_VERSION_KEY": "v2", "ROOT_ID": {"type": "ROOT", "id": "ROOT_ID", "children": ["GRID_ID"]},
+                "GRID_ID": {"type": "GRID", "id": "GRID_ID", "children": [], "parents": ["ROOT_ID"]}}
+    out = place_chart(position, chart_id=77, chart_uuid="u-1", name="Mean by category")
+    header = [n for n in out.values() if isinstance(n, dict) and n.get("type") == "HEADER"]
+    assert header and header[0]["meta"]["text"] == "Assistant charts"
+    charts = [n for n in out.values() if isinstance(n, dict) and n.get("type") == "CHART"]
+    assert charts[0]["meta"]["chartId"] == 77 and charts[0]["meta"]["uuid"] == "u-1"
+    again = place_chart(out, chart_id=78, chart_uuid="u-2", name="Second")
+    assert sum(1 for n in again.values() if isinstance(n, dict) and n.get("type") == "HEADER") == 1
+
+
+def _dashboard_with_two_made_plots():
+    position = {"DASHBOARD_VERSION_KEY": "v2", "ROOT_ID": {"type": "ROOT", "id": "ROOT_ID", "children": ["GRID_ID"]},
+                "GRID_ID": {"type": "GRID", "id": "GRID_ID", "children": ["ROW-mine"], "parents": ["ROOT_ID"]},
+                "ROW-mine": {"type": "ROW", "id": "ROW-mine", "children": ["CHART-mine"], "parents": ["ROOT_ID", "GRID_ID"]},
+                "CHART-mine": {"type": "CHART", "id": "CHART-mine", "children": [],
+                               "parents": ["ROOT_ID", "GRID_ID", "ROW-mine"], "meta": {"chartId": 5, "uuid": "u-0"}}}
+    out = place_chart(position, chart_id=77, chart_uuid="u-1", name="First")
+    return place_chart(out, chart_id=78, chart_uuid="u-2", name="Second")
+
+
+def _charts(position):
+    return [n["meta"]["chartId"] for n in position.values() if isinstance(n, dict) and n.get("type") == "CHART"]
+
+
+def test_the_plots_it_made_are_only_those_under_assistant_charts():
+    assert made_chart_ids(_dashboard_with_two_made_plots()) == [77, 78]
+
+
+def test_removing_a_plot_takes_it_and_its_row_off_and_leaves_the_others_where_they_were():
+    position = _dashboard_with_two_made_plots()
+    out = without_chart(position, 77)
+    assert sorted(_charts(out)) == [5, 78]
+    grid = out["GRID_ID"]["children"]
+    assert all(child in out for child in grid)
+    assert grid == [c for c in position["GRID_ID"]["children"] if c in out]
+    assert "HEADER-aisc-assistant" in out
+
+
+def test_removing_the_last_plot_it_made_takes_the_header_off_too():
+    out = without_chart(without_chart(_dashboard_with_two_made_plots(), 77), 78)
+    assert _charts(out) == [5] and "HEADER-aisc-assistant" not in out
+    assert "HEADER-aisc-assistant" not in out["GRID_ID"]["children"]
+
+
+def test_a_plot_that_is_not_its_own_is_not_removed_unless_any_plot_may_be():
+    position = _dashboard_with_two_made_plots()
+    assert without_chart(position, 5) == position
+
+
+def test_a_replacement_takes_the_old_plots_place():
+    position = _dashboard_with_two_made_plots()
+    out = place_chart(position, chart_id=79, chart_uuid="u-3", name="First, as bars", replaces=77)
+    assert sorted(_charts(out)) == [5, 78, 79]
+    order = [out[r]["children"][0] for r in out["GRID_ID"]["children"] if r.startswith("ROW-")]
+    assert [out[n]["meta"]["chartId"] for n in order] == [5, 79, 78]
+
+
+def test_a_replacement_of_a_plot_no_longer_there_is_added_at_the_end():
+    out = place_chart(without_chart(_dashboard_with_two_made_plots(), 77), chart_id=79, chart_uuid="u-3",
+                      name="x", replaces=77)
+    assert made_chart_ids(out) == [78, 79]
+
+
+def _tabbed_dashboard():
+    return {"DASHBOARD_VERSION_KEY": "v2", "ROOT_ID": {"type": "ROOT", "id": "ROOT_ID", "children": ["TABS-x"]},
+            "TABS-x": {"type": "TABS", "id": "TABS-x", "children": ["TAB-a"], "parents": ["ROOT_ID"], "meta": {}},
+            "TAB-a": {"type": "TAB", "id": "TAB-a", "children": [], "parents": ["ROOT_ID", "TABS-x"],
+                      "meta": {"text": "Against the baseline"}}}
+
+
+def test_on_a_dashboard_with_tabs_its_plots_go_in_a_tab_of_their_own():
+    out = place_chart(_tabbed_dashboard(), chart_id=77, chart_uuid="u-1", name="First")
+    tabs = out["TABS-x"]["children"]
+    assert tabs[0] == "TAB-a" and len(tabs) == 2
+    tab = out[tabs[1]]
+    assert tab["type"] == "TAB" and tab["meta"]["text"] == "Assistant charts"
+    row = out[tab["children"][0]]
+    node = out[row["children"][0]]
+    assert node["meta"]["chartId"] == 77 and node["parents"] == ["ROOT_ID", "TABS-x", tabs[1], row["id"]]
+    assert made_chart_ids(out) == [77]
+
+
+def test_removing_its_last_plot_on_a_tabbed_dashboard_takes_its_tab_off():
+    out = place_chart(_tabbed_dashboard(), chart_id=77, chart_uuid="u-1", name="First")
+    assert without_chart(out, 77) == _tabbed_dashboard()
+
+
+def test_any_plot_on_the_dashboard_can_be_removed_when_asked_for_any():
+    position = _dashboard_with_two_made_plots()
+    out = without_chart(position, 5, any_chart=True)
+    assert sorted(_charts(out)) == [77, 78] and "ROW-mine" not in out
+    assert "ROW-mine" not in out["GRID_ID"]["children"]
+
+
+def test_every_plot_on_the_dashboard_is_listed_saying_which_the_assistant_made():
+    assert plots_on(_dashboard_with_two_made_plots()) == [(5, False), (77, True), (78, True)]
+
+
+def test_a_new_query_can_take_the_place_of_a_plot_the_assistant_did_not_make():
+    position = {"DASHBOARD_VERSION_KEY": "v2", "ROOT_ID": {"type": "ROOT", "id": "ROOT_ID", "children": ["GRID_ID"]},
+                "GRID_ID": {"type": "GRID", "id": "GRID_ID", "children": ["ROW-d"], "parents": ["ROOT_ID"]},
+                "ROW-d": {"type": "ROW", "id": "ROW-d", "children": ["CHART-aisc-d1"], "parents": ["ROOT_ID", "GRID_ID"]},
+                "CHART-aisc-d1": {"type": "CHART", "id": "CHART-aisc-d1", "children": [],
+                                  "parents": ["ROOT_ID", "GRID_ID", "ROW-d"], "meta": {"chartId": 126, "uuid": "d"}}}
+    out = place_chart(position, chart_id=140, chart_uuid="n-1", name="per run", replaces=126, any_chart=True)
+    assert plots_on(out) == [(140, True)]
+    assert out["ROW-d"]["children"] == ["CHART-aisc-assistant-n-1"]
+

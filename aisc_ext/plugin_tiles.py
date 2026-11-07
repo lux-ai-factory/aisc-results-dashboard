@@ -23,9 +23,6 @@ import copy
 from aisc_ext import charts
 from aisc_ext.projects import _pid, project_role_name, results_dataset_current, results_dataset_spec
 
-_AISC_NODES = ("HEADER-aisc-", "MARKDOWN-aisc-", "ROW-aisc-", "CHART-aisc-")
-
-
 #: The longest a string of a plugin's metadata may be: descriptions run longest.
 _MAX_TEXT = {"description": 2000}
 _MAX_DEFAULT = 300
@@ -90,14 +87,14 @@ def user_part(position: dict | None, linked: list[dict]) -> dict:
     def keep(node_id):
         node = position.get(node_id)
         # the chart assistant's plots are people's charts made through it: kept like theirs
-        if not isinstance(node, dict) or (node_id.startswith(_AISC_NODES) and "-aisc-assistant" not in node_id):
+        if not isinstance(node, dict) or charts.synced_node(node_id):
             return
         out[node_id] = copy.deepcopy(node)
         for child in node.get("children", []):
             keep(child)
 
     after = grid[grid.index("HEADER-aisc-yours") + 1:] if "HEADER-aisc-yours" in grid else \
-        [c for c in grid if not c.startswith(_AISC_NODES)]
+        [c for c in grid if not c.startswith(charts.SYNC_NODES)]
     for node_id in after:
         keep(node_id)
     # Placed where it is kept: a chart placed among the defaults is not kept there, so it goes under "Your

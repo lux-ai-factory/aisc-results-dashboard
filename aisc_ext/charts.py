@@ -343,6 +343,117 @@ def layout(*, label, version, placed, starter_chart_id, user_part, has_run=False
     return pos
 
 
+# ── the chart assistant's plots in a dashboard's layout ──
+
+#: the layout nodes a sync writes: a node whose id starts so is the sync's own, and the next sync writes it again
+SYNC_NODES = ("HEADER-aisc-", "MARKDOWN-aisc-", "ROW-aisc-", "CHART-aisc-")
+#: in a node id, the chart assistant's mark: its nodes are people's charts made through it, kept like theirs
+ASSISTANT_MARK = "-aisc-assistant"
+#: the "Assistant charts" header, or tab on a dashboard with tabs, and the chart assistant's chart nodes
+HEADER_TEXT = "Assistant charts"
+_HEADER = f"HEADER{ASSISTANT_MARK}"
+_TAB = f"TAB{ASSISTANT_MARK}"
+_NODE = f"CHART{ASSISTANT_MARK}-"
+
+
+def synced_node(node_id: str) -> bool:
+    """Whether a layout node is the sync's own (it writes it again), not a person's or the chart assistant's."""
+    return node_id.startswith(SYNC_NODES) and ASSISTANT_MARK not in node_id
+def made_chart_ids(position: dict) -> list[int]:
+    """The charts the assistant made on a dashboard, in layout order (its "Assistant charts" header or tab stays while
+    one is left)."""
+    return [n["meta"]["chartId"] for k, n in position.items()
+            if k.startswith(_NODE) and isinstance(n, dict) and n.get("type") == "CHART"]
+
+
+def plots_on(position: dict) -> list[tuple[int, bool]]:
+    """Every chart placed on a dashboard, in layout order, and whether the assistant made it."""
+    out = []
+    for k, n in position.items():
+        if isinstance(n, dict) and n.get("type") == "CHART" and isinstance((n.get("meta") or {}).get("chartId"), int):
+            if n["meta"]["chartId"] not in [c for c, _ in out]:
+                out.append((n["meta"]["chartId"], k.startswith(_NODE)))
+    return out
+
+
+def _node_of(position: dict, chart_id: int, any_chart: bool = False) -> str | None:
+    return next((k for k, n in position.items() if (any_chart or k.startswith(_NODE)) and isinstance(n, dict)
+                 and n.get("type") == "CHART" and (n.get("meta") or {}).get("chartId") == chart_id), None)
+
+
+def without_chart(position: dict, chart_id: int, any_chart: bool = False) -> dict:
+    """The layout with a chart taken off (wherever it is placed), its row with it when empty, and the "Assistant
+    charts" header or tab when no chart of the assistant is left. Only the assistant's own charts unless any_chart:
+    another chart leaves the layout unchanged."""
+    if _node_of(position, chart_id, any_chart) is None:
+        return position
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in position.items()}
+    gone = set()
+    while (node := _node_of(out, chart_id, any_chart)) is not None:
+        gone.add(node)
+        row = (out[node].get("parents") or [None])[-1]
+        del out[node]
+        if row in out and out[row].get("type") == "ROW":
+            out[row]["children"] = [c for c in out[row]["children"] if c != node]
+            if not out[row]["children"]:
+                del out[row]
+                gone.add(row)
+    if not made_chart_ids(out):
+        for own in (_HEADER, _TAB):
+            if own in out:
+                del out[own]
+                gone.add(own)
+    for k, n in out.items():
+        if isinstance(n, dict) and isinstance(n.get("children"), list) and gone & set(n["children"]):
+            n["children"] = [c for c in n["children"] if c not in gone]
+    return out
+
+
+def place_chart(position: dict, *, chart_id: int, chart_uuid: str, name: str, replaces: int | None = None,
+                any_chart: bool = False) -> dict:
+    """The dashboard's layout with the chart in a row of its own under the "Assistant charts" header (in an "Assistant
+    charts" tab on a dashboard with tabs); a chart that
+    replaces one of the assistant's charts takes its place (or goes to the end when that one is no longer there)."""
+    out = dict(position)
+    grid = next((k for k, n in out.items() if isinstance(n, dict) and n.get("type") == "GRID"), None)
+    root = (out.get("ROOT_ID") or {}).get("children") or []
+    tabs = root[0] if root and (out.get(root[0]) or {}).get("type") == "TABS" else None
+    if grid is None and tabs is None:
+        return out
+    node = f"{_NODE}{chart_uuid[:8]}"
+    meta = {"chartId": chart_id, "uuid": chart_uuid, "width": 12, "height": 60, "sliceName": name}
+    old = _node_of(out, replaces, any_chart) if replaces is not None else None
+    if old is not None and old != node:
+        row = out[old]["parents"][-1]
+        out[node] = {"type": "CHART", "id": node, "children": [], "parents": list(out[old]["parents"]),
+                     "meta": {**out[old].get("meta", {}), **meta}}
+        out[row] = {**out[row], "children": [node if c == old else c for c in out[row]["children"]]}
+        del out[old]
+        return out
+    if grid is not None:
+        # a dashboard without tabs: a header, then one row per chart
+        area, parents = grid, ["ROOT_ID", grid]
+        if _HEADER not in out:
+            out[_HEADER] = {"type": "HEADER", "id": _HEADER, "children": [], "parents": parents,
+                            "meta": {"text": HEADER_TEXT, "headerSize": "MEDIUM_HEADER",
+                                     "background": "BACKGROUND_TRANSPARENT"}}
+            out[grid] = {**out[grid], "children": [*out[grid]["children"], _HEADER]}
+    else:
+        # a dashboard with tabs: a tab of its own
+        area, parents = _TAB, ["ROOT_ID", tabs, _TAB]
+        if _TAB not in out:
+            out[_TAB] = {"type": "TAB", "id": _TAB, "children": [], "parents": ["ROOT_ID", tabs],
+                         "meta": {"text": HEADER_TEXT, "defaultText": "Tab title", "placeholder": "Tab title"}}
+            out[tabs] = {**out[tabs], "children": [*out[tabs]["children"], _TAB]}
+    row = f"ROW{ASSISTANT_MARK}-{chart_uuid[:8]}"
+    out[row] = {"type": "ROW", "id": row, "children": [node], "parents": parents,
+                "meta": {"background": "BACKGROUND_TRANSPARENT"}}
+    out[node] = {"type": "CHART", "id": node, "children": [], "parents": parents + [row], "meta": meta}
+    if row not in out[area]["children"]:
+        out[area] = {**out[area], "children": [*out[area]["children"], row]}
+    return out
+
+
 #: The ids of the filters a link may set, in Superset's native_filters URL form: the platform's link to a tile
 #: sets the Target and the Version (the AI card version it came from) by them.
 TARGET_FILTER = "NATIVE_FILTER-target"
