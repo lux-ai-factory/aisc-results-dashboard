@@ -15,6 +15,7 @@ and a chartId placeholder next to each chart's uuid in the layout.
 Pure Python: no Superset import, so it is tested without the app."""
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 
@@ -384,7 +385,6 @@ def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset
         params.update({"aisc_project": pid, "aisc_plugin": plugin, "aisc_chart_id": cid})
         name = default_title(v)
         if (changes := (changed or {}).get(cid)):      # changed by someone with the chart assistant: kept
-            from aisc_ext.assistant.service import changed_params
             try:
                 viz_type, params = changed_params(viz_type, params, {k: v for k, v in changes.items() if k != "title"})
             except ValueError as exc:                   # the default no longer takes it: only its name is kept
@@ -428,3 +428,95 @@ def starter_bundle(*, pid, plugin, label, dataset_uuid, dataset_name, database_u
         description=f"A starting point on this project's {label} results. Change it, then Save as a new chart.")
     return files
 
+
+# ── every plot by its definition, and the changes made to one in place (the chart assistant's) ──
+
+#: a plot's kind as the chart assistant names it, per Superset chart type (the rest keep their own name)
+_KIND_OF_VIZ = {"radar": "radar", "echarts_timeseries_bar": "bar", "echarts_timeseries_line": "line", "table": "table"}
+#: Superset's chart type of the kinds a plot can switch between in place
+_VIZ_OF_KIND = {"bar": "echarts_timeseries_bar", "line": "echarts_timeseries_line"}
+_CHANGES = {"title", "kind", "axis_min", "axis_max", "percent"}
+
+
+def kind_of(viz_type: str) -> str:
+    """A plot's kind (radar, bar, line, table), read back from Superset's chart type."""
+    return _KIND_OF_VIZ.get(viz_type, viz_type)
+
+
+def _filter_text(f: dict) -> str:
+    if f.get("expressionType") == "SQL":
+        return str(f.get("sqlExpression") or "")
+    value = f.get("comparator")
+    value = ", ".join(map(str, value)) if isinstance(value, list) else value
+    return f"{f.get('subject')} {f.get('operator')} {value}"
+
+
+def _metric_text(m) -> str:
+    if isinstance(m, str):
+        return m
+    if m.get("expressionType") == "SQL":
+        return str(m.get("sqlExpression") or m.get("label") or "")
+    return f"{m.get('aggregate')}({(m.get('column') or {}).get('column_name')})"
+
+
+def plot_definition(viz_type: str, params: dict) -> dict:
+    """What a plot shows, as the assistant is told: its kind, axes or x axis, series, value, filters and scale.
+    Read from the chart's settings only: never a value of its results."""
+    kind = kind_of(viz_type)
+    filters = [_filter_text(f) for f in params.get("adhoc_filters") or []]
+    metrics = params.get("metrics") or []
+    if kind == "radar":
+        maxima = {(c or {}).get("radarMetricMaxValue") for c in (params.get("column_config") or {}).values()}
+        value = _metric_text(metrics[0]) + (", one such per axis" if len(metrics) > 1 else "") if metrics else ""
+        return {"kind": kind, "axes": [m.get("label") if isinstance(m, dict) else m for m in metrics],
+                "series": list(params.get("groupby") or []), "value": value, "filters": filters,
+                "axis_max": maxima.pop() if len(maxima) == 1 else None,
+                "percent": "%" in str(params.get("number_format") or "")}
+    if kind in ("bar", "line"):
+        low, high = (list(params.get("y_axis_bounds") or []) + [None, None])[:2]
+        return {"kind": kind, "x": params.get("x_axis"), "series": list(params.get("groupby") or []),
+                "value": ", ".join(_metric_text(m) for m in metrics), "filters": filters,
+                "axis_min": low, "axis_max": high, "percent": "%" in str(params.get("y_axis_format") or "")}
+    return {"kind": kind, "columns": list(params.get("all_columns") or params.get("groupby") or []),
+            "value": ", ".join(_metric_text(m) for m in metrics), "filters": filters}
+
+
+def changed_params(viz_type: str, params: dict, changes: dict) -> tuple[str, dict]:
+    """A plot's settings with the assistant's changes made (a new copy): kind between bar and line, the axis's
+    minimum and maximum, percentages. The title is the chart's name, set by the caller. ValueError for a change this
+    plot cannot take: anything that would need a different query is a new chart (propose_chart)."""
+    unknown = set(changes) - _CHANGES
+    if unknown:
+        raise ValueError(f"cannot change {', '.join(sorted(unknown))}")
+    kind = kind_of(viz_type)
+    out = json.loads(json.dumps(params))
+    for key in ("axis_min", "axis_max"):
+        if key in changes and changes[key] is not None and (isinstance(changes[key], bool)
+                                                            or not isinstance(changes[key], (int, float))):
+            raise ValueError(f"{key} must be a number")
+    if kind not in ("radar", "bar", "line") and set(changes) - {"title"}:
+        raise ValueError(f"a {kind} has no axis or kind to change")
+    if "kind" in changes and changes["kind"] != kind:
+        if kind not in _VIZ_OF_KIND or changes["kind"] not in _VIZ_OF_KIND:
+            raise ValueError(f"a {kind} cannot become a {changes['kind']} in place: it needs a new chart")
+        viz_type = _VIZ_OF_KIND[changes["kind"]]
+        out["viz_type"] = viz_type
+        kind = changes["kind"]
+    if kind == "radar":
+        if changes.get("axis_min") is not None:
+            raise ValueError("a radar's axes start at its centre: no minimum")
+        if "axis_max" in changes:
+            labels = [m.get("label") if isinstance(m, dict) else m for m in out.get("metrics") or []]
+            config = out.get("column_config") or {}
+            out["column_config"] = {**config, **{label: {**(config.get(label) or {}),
+                                                         "radarMetricMaxValue": changes["axis_max"]}
+                                                 for label in labels}}
+        if "percent" in changes:
+            out["number_format"] = PERCENT if changes["percent"] else "SMART_NUMBER"
+    elif kind in ("bar", "line"):
+        if "axis_min" in changes or "axis_max" in changes:
+            low, high = (list(out.get("y_axis_bounds") or []) + [None, None])[:2]
+            out["y_axis_bounds"] = [changes.get("axis_min", low), changes.get("axis_max", high)]
+        if "percent" in changes:
+            out["y_axis_format"] = PERCENT if changes["percent"] else "SMART_NUMBER"
+    return viz_type, out

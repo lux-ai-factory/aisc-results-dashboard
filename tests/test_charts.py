@@ -436,3 +436,12 @@ def test_the_tile_names_its_tool_in_its_filters(charts):
     dashboard = yaml.safe_load(next(v for k, v in files.items() if k.startswith("dashboards/")))
     assert all(f["adhoc_filters"][0]["comparator"] == "StrongREJECT (Mijke)"
                for f in dashboard["metadata"]["native_filter_configuration"])
+
+
+def test_the_superset_format_module_depends_on_no_assistant_code():
+    """charts.py is the only adapter to Superset's formats: the generic bundle never reaches into the assistant."""
+    import ast
+    from pathlib import Path
+    tree = ast.parse((Path(__file__).resolve().parents[1] / "aisc_ext" / "charts.py").read_text())
+    imported = [node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module]
+    assert not [m for m in imported if m.startswith("aisc_ext.assistant")]
