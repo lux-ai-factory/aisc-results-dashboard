@@ -2,7 +2,7 @@
 title, kind between bar and line, the axis's minimum and maximum, percentages."""
 import pytest
 
-from aisc_ext.assistant.service import changed_params, plot_definition
+from aisc_ext.charts import changed_params, plot_definition
 
 FILTERS = [{"expressionType": "SIMPLE", "subject": "tool", "operator": "==", "comparator": "StrongREJECT (Mijke)",
             "clause": "WHERE"},

@@ -14,10 +14,9 @@ from flask import g, request, session
 from flask_appbuilder.api import BaseApi, expose, protect, safe
 
 from aisc_ext import ledger
-from aisc_ext.assistant.service import (chart_uuid_of, description_from, kind_of, may_validate,
-                                        changed_params, distinct_sql, plot_definition, plots_on, to_change,
-                                        place_chart, ranges_from, to_remove, validated_files, with_conversation,
-                                        without_chart)
+from aisc_ext.assistant.service import (chart_uuid_of, description_from, distinct_sql, may_validate, ranges_from,
+                                        to_change, to_remove, validated_files, with_conversation)
+from aisc_ext.charts import changed_params, kind_of, place_chart, plot_definition, plots_on, without_chart
 from aisc_ext.comments.api import _send_queued
 from aisc_ext.dashboards import open_dashboard
 

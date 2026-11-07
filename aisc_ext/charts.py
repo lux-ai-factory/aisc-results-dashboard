@@ -359,6 +359,8 @@ _NODE = f"CHART{ASSISTANT_MARK}-"
 def synced_node(node_id: str) -> bool:
     """Whether a layout node is the sync's own (it writes it again), not a person's or the chart assistant's."""
     return node_id.startswith(SYNC_NODES) and ASSISTANT_MARK not in node_id
+
+
 def made_chart_ids(position: dict) -> list[int]:
     """The charts the assistant made on a dashboard, in layout order (its "Assistant charts" header or tab stays while
     one is left)."""

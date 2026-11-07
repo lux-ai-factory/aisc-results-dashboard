@@ -4,9 +4,9 @@ import hashlib
 
 import pytest
 
-from aisc_ext.assistant.service import (MAX_LABELS, chart_params, description_from, distinct_sql, kind_of,
-                                        may_validate, to_remove,
-                                        validated_files)
+from aisc_ext.assistant.service import (MAX_LABELS, chart_params, description_from, distinct_sql, may_validate,
+                                        to_remove, validated_files)
+from aisc_ext.charts import kind_of
 
 SQL = "SELECT dimensions->>'category' AS category, 'x' AS series, avg(score) AS value FROM engine.aisc_backend_measurement GROUP BY 1"
 
@@ -189,3 +189,11 @@ def test_a_numeric_labels_range_keeps_its_fractions_and_whole_ranges_stay_whole(
     assert out["M"]["score"] == (0.1, 0.75, False)
     assert out["M"]["dimensions"]["threshold"] == (0.2, 0.9)
     assert out["M"]["dimensions"]["turns"] == (1, 6) and isinstance(out["M"]["dimensions"]["turns"][0], int)
+
+
+def test_the_service_keeps_only_the_assistants_own_rules_and_reexports_no_superset_format():
+    """Superset's formats have one home, charts.py: callers import them from there."""
+    from aisc_ext.assistant import service
+    for name in ("changed_params", "kind_of", "plot_definition", "place_chart", "plots_on", "without_chart",
+                 "made_chart_ids"):
+        assert not hasattr(service, name), name

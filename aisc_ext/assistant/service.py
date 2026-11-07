@@ -12,8 +12,7 @@ import hashlib
 import uuid
 
 from aisc_ext import charts
-from aisc_ext.charts import (changed_params, kind_of, made_chart_ids, place_chart,  # noqa: F401 - re-exported
-                            plot_definition, plots_on, quoted_name, without_chart)
+from aisc_ext.charts import quoted_name
 
 MAX_LABELS = 50
 MAX_LABEL_LENGTH = 60
