@@ -9,7 +9,7 @@ import json
 from flask import g, request
 from flask_appbuilder.api import BaseApi, expose, protect, safe
 
-from aisc_ext import ledger
+from aisc_ext import access, ledger
 from aisc_ext.assistant.service import may_validate
 from aisc_ext.comments.api import _send_queued
 from aisc_ext.dashboards import open_dashboard
@@ -47,8 +47,8 @@ class ReportExportApi(BaseApi):
         if (problem := ledger.hint_problem(request.args.get("dashboard"), dashboard.slug)) is not None:
             return self.response_400(message=problem)
         user = g.user
-        pid = ledger.project_for(dashboard, user)
-        if not may_validate({r.name for r in user.roles}, pid):
+        pid = access.project_for(dashboard, user)
+        if pid is None or not may_validate({r.name for r in user.roles}, pid):
             return self.response(403, message="Only an editor or an admin of the project can save a plot to the report.")
         try:
             plot = read_plot(body)

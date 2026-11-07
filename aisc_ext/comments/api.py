@@ -12,7 +12,7 @@ read, write or delete its comments either. Imported only inside Superset."""
 from flask import g, request
 from flask_appbuilder.api import BaseApi, expose, protect, safe
 
-from aisc_ext import ledger
+from aisc_ext import access, ledger
 from aisc_ext.comments.service import can_delete, chart_filter, hide_once, make_comment
 from aisc_ext.dashboards import open_dashboard
 from aisc_ext.review.service import (
@@ -175,7 +175,7 @@ class CommentApi(BaseApi):
         db.session.add(row)
         db.session.flush()                                              # gives the row its id, for the event
         # the ledger event goes in the comment's own transaction: both commit, or neither
-        ledger.emit(db.session.connection(), ledger.project_for(dashboard, g.user), "dashboard.comment.created",
+        ledger.emit(db.session.connection(), access.project_for(dashboard, g.user), "dashboard.comment.created",
                     ledger.comment_created(row.to_dict(), slug=dashboard.slug,
                                               request=ledger.request_id(request.headers, request.environ)))
         db.session.commit()
@@ -205,7 +205,7 @@ class CommentApi(BaseApi):
         if not hide_once(db.session, AiscComment, pk, datetime.now(timezone.utc)):   # hidden, not removed
             db.session.rollback()
             return self.response_404()
-        ledger.emit(db.session.connection(), ledger.project_for(dashboard, g.user), "dashboard.comment.deleted",
+        ledger.emit(db.session.connection(), access.project_for(dashboard, g.user), "dashboard.comment.deleted",
                     ledger.comment_deleted(row.to_dict(), slug=dashboard.slug,
                                               request=ledger.request_id(request.headers, request.environ)))
         db.session.commit()

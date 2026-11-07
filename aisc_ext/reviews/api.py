@@ -7,7 +7,7 @@ transaction. Imported only inside Superset."""
 from flask import g, request
 from flask_appbuilder.api import BaseApi, expose, protect, safe
 
-from aisc_ext import ledger
+from aisc_ext import access, ledger
 from aisc_ext.comments.api import _send_queued
 from aisc_ext.dashboards import open_dashboard
 from aisc_ext.review.service import charts_in_layout
@@ -97,7 +97,7 @@ class ReviewRequestApi(BaseApi):
         row = AiscReviewRequest(**{k: v for k, v in data.items() if k != "created_at"})
         db.session.add(row)
         db.session.flush()                                              # gives the row its id, for the event
-        ledger.emit(db.session.connection(), ledger.project_for(dashboard, g.user), "dashboard.review.requested",
+        ledger.emit(db.session.connection(), access.project_for(dashboard, g.user), "dashboard.review.requested",
                     ledger.review_requested(row.to_dict(), slug=slug,
                                             request=ledger.request_id(request.headers, request.environ)))
         db.session.commit()
@@ -136,7 +136,7 @@ class ReviewRequestApi(BaseApi):
         row.status = status_after
         row.resolved_at = datetime.now(timezone.utc)
         row.resolved_by = name
-        ledger.emit(db.session.connection(), ledger.project_for(dashboard, g.user), "dashboard.review.resolved",
+        ledger.emit(db.session.connection(), access.project_for(dashboard, g.user), "dashboard.review.resolved",
                     ledger.review_resolved(row.to_dict(), status_before=status_before, slug=slug,
                                               request=ledger.request_id(request.headers, request.environ)))
         db.session.commit()

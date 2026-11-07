@@ -59,26 +59,6 @@ def project_of(slug) -> str | None:
     return str(uuid.UUID(m.group(1)))
 
 
-def project_for(dashboard, user) -> str | None:
-    """The project whose ledger a write on `dashboard` by `user` goes to, or None (no event is queued).
-
-    The slug alone is no binding: any owner of a dashboard may set it, so an editor of one project could name
-    another's in it and write into that project's ledger. The slug's project
-    counts only when the dashboard carries that project's role (the bridge sets it; DASHBOARD_RBAC shows it to
-    the project's members) and the person writing is in the project (its role, from this sign-in's
-    memberships) or an Admin."""
-    from aisc_ext.projects import project_role_name
-
-    pid = project_of(getattr(dashboard, "slug", None))
-    if pid is None:
-        return None
-    role = project_role_name(pid)
-    if role not in {r.name for r in getattr(dashboard, "roles", None) or []}:
-        return None
-    mine = {r.name for r in getattr(user, "roles", None) or []}
-    return pid if role in mine or "Admin" in mine else None
-
-
 def hint_problem(hint, slug) -> str | None:
     """Check the request's witness hint against the dashboard actually written to.
 

@@ -1,6 +1,6 @@
 """The routes' wiring, run in a real Superset.
 
-The decision logic of the fixes (a request resolved once, `ledger.project_for`, `ledger.request_id`,
+The decision logic of the fixes (a request resolved once, `access.project_for`, `ledger.request_id`,
 `security.plugin_tiles` / `may_import_into`, the requester's own resolution, bad input) is tested by
 behaviour in test_reviews.py, test_ledger.py and test_tile_binding.py; there, that the routes call it was
 proven only by reading their source. Here the routes run: a Superset app on a throwaway SQLite metadata database, the extension installed
@@ -188,6 +188,14 @@ with app.app_context():
         session["_fresh"] = True
     fresh_request_globals()
     as_viewer = {"headers": {"X-CSRFToken": viewer.get("/api/v1/security/csrf_token/").get_json()["result"]}}
+    root = sm.add_user("root", "Ro", "Ot", "root@test.invalid", [sm.find_role("Admin")], password="test-only")
+    admin = app.test_client()
+    with admin.session_transaction() as session:
+        session["_user_id"] = str(root.id)
+        session["_fresh"] = True
+    fresh_request_globals()
+    as_admin = {"headers": {"X-CSRFToken": admin.get("/api/v1/security/csrf_token/").get_json()["result"]}}
+    no_project = dashboard("sales", [project_role_name(A)])
 
     # the chart assistant service, its project connection and the project's data are not here: stand-ins
     answers = {}
@@ -205,10 +213,10 @@ with app.app_context():
     def plots():
         return db.session.query(AiscReportPlot).count()
 
-    def save(name, chart_name, how=direct, who=None, hint=charts_slug):
+    def save(name, chart_name, how=direct, who=None, hint=charts_slug, on=None):
         before = plots()
         call(name, "post", "/api/v1/aisc_report_export/" + (f"?dashboard={hint}" if hint else ""), how,
-             who=who, json={"dashboard_id": with_charts, "chart": chart_name,
+             who=who, json={"dashboard_id": on or with_charts, "chart": chart_name,
                             "svg": '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>'})
         seen[name]["rows"] = plots() - before
 
@@ -217,6 +225,7 @@ with app.app_context():
     save("export.other_hint", "Pass rate by model", hint=f"aisc-{hex_b}-p")
     save("export.editor", "Pass rate by model")
     save("export.override_name", "Drift, named on this dashboard")
+    save("export.admin_no_project", "Pass rate by model", as_admin, admin, hint=None, on=no_project)
 
     here = f"?dashboard={charts_slug}"
     mine_c = call("assistant.start.editor", "post", "/api/v1/aisc_assistant/conversations" + here,
@@ -354,6 +363,11 @@ def test_an_import_into_another_projects_tile_or_a_planted_dashboard_is_403(seen
 def test_a_viewer_may_not_save_a_plot_to_the_report(seen):
     assert seen["export.viewer"]["status"] == 403
     assert seen["export.viewer"]["rows"] == 0 and seen["export.viewer"]["events"] == []
+
+
+def test_a_plot_of_a_dashboard_of_no_project_is_not_saved_even_by_an_admin(seen):
+    assert seen["export.admin_no_project"]["status"] == 403, seen["export.admin_no_project"]["text"][:500]
+    assert seen["export.admin_no_project"]["rows"] == 0 and seen["export.admin_no_project"]["events"] == []
 
 
 def test_a_saved_plot_must_name_a_chart_placed_on_the_dashboard(seen):

@@ -13,7 +13,7 @@ import urllib.request
 from flask import g, request, session
 from flask_appbuilder.api import BaseApi, expose, protect, safe
 
-from aisc_ext import ledger
+from aisc_ext import access, ledger
 from aisc_ext.assistant.service import (chart_uuid_of, description_from, distinct_sql, may_validate,
                                         plots_for_model, ranges_from, to_change, to_remove, validated_files,
                                         with_conversation)
@@ -182,7 +182,7 @@ class AssistantApi(BaseApi):
         dashboard, status = open_dashboard(dashboard_id)
         if status:
             return None, None, (self.response_404() if status == 404 else self.response_403())
-        pid = ledger.project_for(dashboard, g.user)
+        pid = access.project_for(dashboard, g.user)
         if pid is None:
             return None, None, self.response_403()
         # the witness hint (?dashboard=<slug>) files the request under the slug's project: it must be this dashboard

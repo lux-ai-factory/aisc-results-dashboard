@@ -390,51 +390,6 @@ def test_only_the_platforms_no_project_answer_counts_as_a_404(monkeypatch, body,
     assert ledger.http_sender(post)(PID, {"event_id": "e1"}) == status
 
 
-# ── The ledger project was read from the slug, which any owner writes ───────────────────────────────────────
-# An editor of their own project made a dashboard with slug aisc-<victim hex>-notes and commented on it: the
-# event went into the victim's ledger. The project is now the slug's only when the dashboard carries that
-# project's role and the person writing is in the project (or an Admin); otherwise no event is queued.
-
-OTHER = "1e722ea2-4ce3-47fa-81bf-11a6b53ad679"
-
-
-def _named(*names):
-    from types import SimpleNamespace as NS
-
-    return [NS(name=n) for n in names]
-
-
-def _dash(slug, *roles):
-    from types import SimpleNamespace as NS
-
-    return NS(slug=slug, roles=_named(*roles))
-
-
-def _user(*roles):
-    from types import SimpleNamespace as NS
-
-    return NS(roles=_named(*roles))
-
-
-def test_a_dashboard_of_the_project_written_by_a_member_names_its_project():
-    from aisc_ext.projects import project_role_name
-
-    role = project_role_name(PID)
-    assert ledger.project_for(_dash(SLUG + "-langbite", role), _user(role, "AiscViewer")) == PID
-    assert ledger.project_for(_dash(SLUG, role), _user("Admin")) == PID
-
-
-def test_a_slug_alone_names_no_project():
-    from aisc_ext.projects import project_role_name
-
-    victim, mine = project_role_name(PID), project_role_name(OTHER)
-    planted = SLUG + "-notes"
-    assert ledger.project_for(_dash(planted), _user(mine)) is None                  # no role on the dashboard
-    assert ledger.project_for(_dash(planted, victim), _user(mine)) is None          # role set, writer not in it
-    assert ledger.project_for(_dash(planted, mine), _user(mine)) is None            # another project's role
-    assert ledger.project_for(_dash("sales"), _user("Admin")) is None
-
-
 def _route(path, cls, fn):
     import ast
     from pathlib import Path
@@ -450,7 +405,7 @@ def _route(path, cls, fn):
                                          ("aisc_ext/reviews/api.py", "ReviewRequestApi", "patch")])
 def test_every_write_takes_its_project_from_the_binding(path, cls, fn):
     text = _route(path, cls, fn)
-    assert "ledger.project_for(" in text and "ledger.project_of(" not in text
+    assert "access.project_for(" in text and "ledger.project_of(" not in text
 
 
 def test_a_pass_on_postgres_ends_cleanly_on_the_images_sqlalchemy(monkeypatch):
