@@ -1,7 +1,8 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
 """/api/v1/aisc_assistant: the chart assistant panel's door. It admits a person to a dashboard of a project (Superset's
-own check), tells the assistant what the project's data looks like (service.description_from, never a row), forwards
+own check), tells the assistant what the project's data looks like (service.description_from: its target labels and
+short dimension labels as they are, never a row), forwards
 the conversation, and on validation makes the chart from exactly the validated query on the project's own read-only
 connection, with its ledger event. Imported only inside Superset."""
 import json

@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """What the dashboard tells the chart assistant about a project, and how a validated proposal becomes a chart.
 
-The description holds the project's targets, its metrics and their dimension keys, and the values of a key only when
-it is a short label (at most MAX_LABELS values, at most MAX_LABEL_LENGTH characters on average): free text such as
-prompts or answers never goes to the model (D2). No count of rows. Pure: no Superset import."""
+The description holds the project's targets (their real labels), its metrics and their dimension keys, and the real
+values of a key when it is a short label (at most MAX_LABELS values, at most MAX_LABEL_LENGTH characters on average):
+these travel as they are to the project's chosen model and into its mock database. Free text such as prompts or
+answers never goes to the model (D2). No count of rows. Pure: no Superset import."""
 from __future__ import annotations
 
 import hashlib
@@ -24,7 +25,11 @@ _dump = lambda o: yaml.safe_dump(o, sort_keys=False, allow_unicode=True)
 def description_from(targets, rows, ranges=None) -> dict:
     """targets: labels; rows: (metric, key, values seen (at most MAX_LABELS + 1), distinct count, all numbers,
     mean length); ranges: metric -> {"score": (min, max, whole), "dimensions": {key: (min, max)}}, of the metric's first
-    finished run: the only thing of the real values that goes to the assistant (it draws the mock values in them)."""
+    finished run (the assistant draws the mock values in them).
+
+    Of the real data, the assistant gets the target labels, every label of a dimension with few distinct short values
+    (as they are), and these ranges; never a row, a count or free text. The labels reach the project's chosen model
+    and the mock database's rows."""
     ranges = ranges or {}
     metrics: dict[str, dict] = {}
     for metric, key, values, distinct, numeric, mean_length in rows:
