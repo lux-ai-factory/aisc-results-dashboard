@@ -264,3 +264,14 @@ def test_the_session_keeps_only_the_most_recent_conversations():
     assert len(held) == MAX_CONVERSATIONS <= 20
     assert list(held) == [f"conversation-{n}" for n in range(200 - MAX_CONVERSATIONS, 200)]
     assert held["conversation-199"] == 199
+
+
+def test_a_numeric_labels_range_keeps_its_fractions_and_whole_ranges_stay_whole():
+    from decimal import Decimal
+
+    from aisc_ext.assistant.service import ranges_from
+    out = ranges_from([("M", Decimal("0.1"), Decimal("0.75"), False)],
+                      [("M", "threshold", Decimal("0.2"), Decimal("0.9")), ("M", "turns", Decimal("1"), Decimal("6"))])
+    assert out["M"]["score"] == (0.1, 0.75, False)
+    assert out["M"]["dimensions"]["threshold"] == (0.2, 0.9)
+    assert out["M"]["dimensions"]["turns"] == (1, 6) and isinstance(out["M"]["dimensions"]["turns"][0], int)

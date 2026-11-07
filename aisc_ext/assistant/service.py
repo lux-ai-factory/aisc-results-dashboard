@@ -57,6 +57,25 @@ def with_conversation(held: dict | None, cid: str, dashboard_id) -> dict:
     return dict(list(out.items())[-MAX_CONVERSATIONS:])
 
 
+def ranges_from(score_rows, label_rows) -> dict:
+    """description_from's ranges, from (metric, min, max, whole) score rows and (metric, key, min, max) rows of
+    numeric labels, of each metric's first finished run."""
+    out: dict = {}
+    for name, low, high, whole in score_rows:
+        out.setdefault(name, {"dimensions": {}})["score"] = (
+            None if low is None else float(low), None if high is None else float(high), bool(whole))
+    for name, key, low, high in label_rows:
+        out.setdefault(name, {"dimensions": {}})["dimensions"][key] = (_number(low), _number(high))
+    return out
+
+
+def _number(value):
+    """A label's bound as it is: whole numbers as int, anything else as float (never truncated)."""
+    if value is None:
+        return None
+    return int(value) if float(value).is_integer() else float(value)
+
+
 def may_validate(roles, project_hex: str) -> bool:
     """Validating is an editor's or an admin's act (D3)."""
     return "Admin" in roles or f"AiscProjectEditor_{project_hex}" in roles

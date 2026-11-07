@@ -15,7 +15,7 @@ from flask_appbuilder.api import BaseApi, expose, protect, safe
 from aisc_ext import ledger
 from aisc_ext.assistant.service import (chart_uuid_of, description_from, kind_of, may_validate,
                                         changed_params, distinct_sql, plot_definition, plots_on, to_change,
-                                        place_chart, to_remove, validated_files, with_conversation,
+                                        place_chart, ranges_from, to_remove, validated_files, with_conversation,
                                         without_chart)
 from aisc_ext.comments.api import _send_queued
 from aisc_ext.dashboards import open_dashboard
@@ -63,13 +63,7 @@ SELECT met.name, k.key, min((m.dimensions->>k.key)::numeric), max((m.dimensions-
 
 
 def _ranges(database) -> dict:
-    out: dict = {}
-    for name, low, high, whole in _rows(database, SCORE_RANGES_SQL)[1]:
-        out.setdefault(name, {"dimensions": {}})["score"] = (
-            None if low is None else float(low), None if high is None else float(high), bool(whole))
-    for name, key, low, high in _rows(database, LABEL_RANGES_SQL)[1]:
-        out.setdefault(name, {"dimensions": {}})["dimensions"][key] = (int(low), int(high))
-    return out
+    return ranges_from(_rows(database, SCORE_RANGES_SQL)[1], _rows(database, LABEL_RANGES_SQL)[1])
 
 
 def _assistant(path: str, body: dict) -> tuple[int, dict]:
