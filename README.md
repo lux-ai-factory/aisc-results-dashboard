@@ -294,8 +294,8 @@ A few tests read the aisc repo's `dashboard-gateway` code and are skipped outsid
 `apps/results-dashboard`; the session-cookie tests of `tests/test_embedding.py` need Superset and
 flask-talisman, so they are skipped by the command above and run in the dashboard image.
 `tests/test_routes_in_superset.py` also runs only in the image: it boots Superset on a throwaway SQLite
-metadata database (about 80 s) and calls the comment, review request and chart import routes as a
-signed-in person (CSRF, resolve once, which project's ledger an event goes to, request ids, tiles).
+metadata database (about 80 s) and calls the comment, review request, chart import, Save to report
+and chart assistant routes as a signed-in person (CSRF, resolve once, which project's ledger an event goes to, request ids, tiles).
 The image command is at the top of `tests/test_event_logger_default.py`.
 
 ## Layout
@@ -306,6 +306,10 @@ aisc_ext/               the extension package (mounted next to it)
   projects.py           what the bridge creates per project: connection, datasets, role
   plugin_tiles.py,      one dashboard (tile) per plugin, from its default charts
   charts.py
+  made_tiles.py         what a tile's sync keeps: tiles made, defaults removed or changed with the assistant
+  assistant/            the chart assistant panel's routes (/api/v1/aisc_assistant): what it is told of a
+                        project, validated charts, changes and removals
+  report_exports/       Save to report (/api/v1/aisc_report_export): a plot as an SVG, checked, for the report
   project_bridge_api.py the bridge routes, /api/v1/aisc_project/<pid> and .../<pid>/plugins
   import_view.py,       Assessment > Import charts: a chart export ZIP into a tile
   chart_import.py
@@ -320,6 +324,8 @@ aisc_ext/               the extension package (mounted next to it)
   ledger.py             ledger events and their outbox
   branding.py           branding from env vars
 branding/               logos, served at /static/assets/branding/
+  save-to-report/       the Save to report button, the chart assistant panel and the ECharts they draw with
+templates_override/     Superset's tail_js_custom_extra.html hook, which loads those two scripts by version
 scripts/                bootstrap.sh (standalone setup), verify_review.py (in-container check)
 tests/                  unit tests and the Postgres tests (test_project_datasets_db.py, one in test_ledger.py)
 Dockerfile              stock Superset image plus Authlib and psycopg2-binary
@@ -331,8 +337,9 @@ DECISIONS.md            why the design is the way it is
 
 - `pilot` is the only branch to work on; the aisc repo pins this submodule on
   it.
-- There are no migrations of its own. The tables `aisc_comment`, `aisc_review_request` and
-  `aisc_ledger_outbox` are created in Superset's metadata database at startup if missing
+- There are no migrations of its own. The tables `aisc_comment`, `aisc_review_request`,
+  `aisc_ledger_outbox`, `aisc_made_tile`, `aisc_removed_chart`, `aisc_changed_chart` and
+  `aisc_report_plot` are created in Superset's metadata database at startup if missing
   (`_install_extension` in `superset_config.py`), and roles and permissions are refreshed at
   every start.
 - Upgrading Superset: change the tag in the `Dockerfile`, rebuild, and run
