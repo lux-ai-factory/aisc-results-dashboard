@@ -15,7 +15,9 @@ MAX_COMMENT = 4000
 MAX_NAME = 255
 MAX_TAGS = 30
 MAX_TAG = 500
-FORBIDDEN_ELEMENTS = {"script", "foreignobject", "iframe", "object", "embed", "link"}
+#: elements that run, embed or fetch, and SVG animation (SMIL), which can set a link to javascript:
+FORBIDDEN_ELEMENTS = {"script", "foreignobject", "iframe", "object", "embed", "link",
+                      "animate", "set", "animatemotion", "animatetransform"}
 _FETCHES = re.compile(r"url\(\s*['\"]?(?!#)", re.IGNORECASE)
 
 
@@ -37,11 +39,15 @@ def _check_svg(text) -> None:
     for element in root.iter():
         if _local(element.tag) in FORBIDDEN_ELEMENTS:
             raise ValueError(f"the SVG must not hold a {_local(element.tag)} element")
-        # ECharts writes its own style rules; one that could fetch something (an import, an outside url) is refused
-        if _local(element.tag) == "style" and ("@import" in (element.text or "").lower() or _FETCHES.search(element.text or "")):
+        # ECharts writes its own style rules; one that could fetch something (an import, an outside url) is refused,
+        # and so is any CSS escape (a backslash), which can spell url( so that the check above cannot see it
+        style = element.text or ""
+        if _local(element.tag) == "style" and ("@import" in style.lower() or _FETCHES.search(style) or "\\" in style):
             raise ValueError("the SVG's style must not point outside itself")
         for name, value in element.attrib.items():
             attribute = _local(name)
+            if attribute == "style" and "\\" in value:
+                raise ValueError("the SVG's style must not hold a CSS escape")
             if attribute.startswith("on"):
                 raise ValueError("the SVG must not hold an event handler")
             if attribute in ("href", "src") and not value.startswith("#"):

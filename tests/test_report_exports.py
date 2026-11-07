@@ -50,6 +50,22 @@ def test_an_svg_that_could_run_or_fetch_something_is_refused(svg):
         read_plot(body(svg=svg))
 
 
+@pytest.mark.parametrize("svg", [
+    '<svg xmlns="http://www.w3.org/2000/svg"><a><set attributeName="href" to="javascript:alert(1)"/>'
+    '<text>x</text></a></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg"><a><animate attributeName="href" values="javascript:alert(1)"/>'
+    '<text>x</text></a></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"><animateMotion dur="1s" path="M0 0L1 1"/></path></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"><animateTransform attributeName="transform"/></path></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg"><path style="fill:\\75 rl(http://evil/x)"/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg"><style>path{fill:\\75 rl(http://evil/x)}</style></svg>',
+])
+def test_an_svg_animation_or_a_css_escape_is_refused(svg):
+    """An animation can set a link to javascript:, and a CSS escape spells url( so the url check cannot see it."""
+    with pytest.raises(ValueError, match="SVG"):
+        read_plot(body(svg=svg))
+
+
 def test_the_style_echarts_writes_is_taken():
     svg = ('<svg xmlns="http://www.w3.org/2000/svg"><style>@keyframes zr-key {0%{opacity:1}}'
            ' path{stroke-linejoin:round}</style><path d="M0 0"/></svg>')
