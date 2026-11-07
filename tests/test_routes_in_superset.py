@@ -5,6 +5,8 @@ The decision logic of the fixes (a request resolved once, `ledger.project_for`, 
 behaviour in test_reviews.py, test_ledger.py and test_tile_binding.py; there, that the routes call it was
 proven only by reading their source. Here the routes run: a Superset app on a throwaway SQLite metadata database, the extension installed
 by superset_config.py's FLASK_APP_MUTATOR as in the stack, a person signed in through the Flask test client.
+Save to report and the chart assistant's routes run the same way, with the assistant service and the project's
+connection replaced by stand-ins.
 
 Runs in the dashboard image, where Superset is importable (skipped elsewhere), in a throwaway container,
 never the live `dashboard` (the recipe is in test_event_logger_default.py). Superset is booted once, in a
@@ -44,6 +46,7 @@ from superset.app import create_app
 app = create_app()
 seen = {}
 with app.app_context():
+    from flask import g
     from superset import db, security_manager as sm
     from superset.models.dashboard import Dashboard
     from sqlalchemy import select
@@ -102,9 +105,16 @@ with app.app_context():
             return [{"pid": r.project_pid, "action": r.event["action"], "request_id": r.event.get("request_id")}
                     for r in conn.execute(select(ledger.OUTBOX).order_by(ledger.OUTBOX.c.id))]
 
-    def call(name, method, url, how=direct, **kw):
+    def fresh_request_globals():
+        # the scenario runs in one app context, so `g` would carry the signed-in user and the CSRF token from one
+        # request to the next; a second person's requests need it fresh, as each real request has it
+        for key in list(vars(g)):
+            g.pop(key)
+
+    def call(name, method, url, how=direct, who=None, **kw):
         before = len(queued())
-        r = getattr(client, method)(url, **how, **kw)
+        fresh_request_globals()
+        r = getattr(who or client, method)(url, **how, **kw)
         body = r.get_json(silent=True) or {}
         seen[name] = {"status": r.status_code, "events": queued()[before:],
                       "id": (body.get("result") or {}).get("id") if isinstance(body.get("result"), dict) else None,
@@ -139,6 +149,108 @@ with app.app_context():
     call("import.form", "get", "/aisc/import/")
     for name, d in (("tile_a", tile_a), ("tile_b", tile_b), ("planted", planted)):
         call(f"import.upload.{name}", "post", "/aisc/import/", data={"dashboard": str(d), "csrf_token": csrf})
+
+    # ── Save to report and the chart assistant, on a dashboard of A with two charts placed ──
+    from superset.models.slice import Slice
+
+    import aisc_ext.assistant.api as assistant_api
+    from aisc_ext.report_exports.model import AiscReportPlot
+
+    def chart(name):
+        c = Slice(slice_name=name, viz_type="echarts_timeseries_bar", params="{}", datasource_type="table",
+                  datasource_id=999)
+        db.session.add(c)
+        db.session.commit()
+        return c
+
+    bars, drift = chart("Pass rate by model"), chart("Drift by feature")
+    row = ["ROOT_ID", "GRID_ID", "ROW-1"]
+    position = {"DASHBOARD_VERSION_KEY": "v2", "ROOT_ID": {"type": "ROOT", "id": "ROOT_ID", "children": ["GRID_ID"]},
+                "GRID_ID": {"type": "GRID", "id": "GRID_ID", "children": ["ROW-1"], "parents": ["ROOT_ID"]},
+                "ROW-1": {"type": "ROW", "id": "ROW-1", "children": ["CHART-1", "CHART-2"],
+                          "parents": ["ROOT_ID", "GRID_ID"]},
+                "CHART-1": {"type": "CHART", "id": "CHART-1", "children": [], "parents": row,
+                            "meta": {"chartId": bars.id, "uuid": str(bars.uuid)}},
+                "CHART-2": {"type": "CHART", "id": "CHART-2", "children": [], "parents": row,
+                            "meta": {"chartId": drift.id, "uuid": str(drift.uuid),
+                                     "sliceNameOverride": "Drift, named on this dashboard"}}}
+    charts_slug = f"aisc-{hex_a}-charts"
+    d = Dashboard(dashboard_title=charts_slug, slug=charts_slug, published=True, json_metadata="{}",
+                  position_json=json.dumps(position), roles=[role[project_role_name(A)]], slices=[bars, drift])
+    db.session.add(d)
+    db.session.commit()
+    with_charts = d.id
+    vic = sm.add_user("vic", "Vic", "Viewer", "vic@test.invalid",
+                      [sm.find_role(VIEWER_ROLE), role[project_role_name(A)]], password="test-only")
+    viewer = app.test_client()
+    with viewer.session_transaction() as session:
+        session["_user_id"] = str(vic.id)
+        session["_fresh"] = True
+    fresh_request_globals()
+    as_viewer = {"headers": {"X-CSRFToken": viewer.get("/api/v1/security/csrf_token/").get_json()["result"]}}
+
+    # the chart assistant service, its project connection and the project's data are not here: stand-ins
+    answers = {}
+
+    def assistant(path, body):
+        if path.endswith("/conversations"):
+            answers["started"] = answers.get("started", 0) + 1
+            return 201, {"conversation": f"conversation-{answers['started']}"}
+        return 200, answers[path.rsplit("/", 1)[-1]]
+
+    assistant_api._assistant = assistant
+    assistant_api._database = lambda pid: ({"database_name": "project"}, object())
+    assistant_api._rows = lambda database, sql: ([], [])
+
+    def plots():
+        return db.session.query(AiscReportPlot).count()
+
+    def save(name, chart_name, how=direct, who=None, hint=charts_slug):
+        before = plots()
+        call(name, "post", "/api/v1/aisc_report_export/" + (f"?dashboard={hint}" if hint else ""), how,
+             who=who, json={"dashboard_id": with_charts, "chart": chart_name,
+                            "svg": '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>'})
+        seen[name]["rows"] = plots() - before
+
+    save("export.viewer", "Pass rate by model", as_viewer, viewer)
+    save("export.not_on_the_dashboard", "A plot made up")
+    save("export.other_hint", "Pass rate by model", hint=f"aisc-{hex_b}-p")
+    save("export.editor", "Pass rate by model")
+    save("export.override_name", "Drift, named on this dashboard")
+
+    here = f"?dashboard={charts_slug}"
+    mine_c = call("assistant.start.editor", "post", "/api/v1/aisc_assistant/conversations" + here,
+                  json={"dashboard_id": with_charts})
+    vic_c = call("assistant.start.viewer", "post", "/api/v1/aisc_assistant/conversations" + here, as_viewer,
+                 who=viewer, json={"dashboard_id": with_charts})
+    call("assistant.start.other_hint", "post", f"/api/v1/aisc_assistant/conversations?dashboard=aisc-{hex_b}-p",
+         json={"dashboard_id": with_charts})
+    mine_c, vic_c = (json.loads(c["text"]).get("conversation") for c in (mine_c, vic_c))
+    answers["messages"] = {"change": {"chart": bars.id, "changes": {"title": "Renamed by a viewer"}}}
+    call("assistant.change.viewer", "post", f"/api/v1/aisc_assistant/conversations/{vic_c}/messages{here}",
+         as_viewer, who=viewer, json={"text": "rename it"})
+    answers["messages"] = {"remove": [{"chart": bars.id}]}
+    call("assistant.remove.viewer", "post", f"/api/v1/aisc_assistant/conversations/{vic_c}/messages{here}",
+         as_viewer, who=viewer, json={"text": "remove it"})
+    answers["validate"] = {"project": A, "sql": "SELECT 1", "fingerprint": "f",
+                           "chart": {"kind": "table", "title": "t", "category": "c", "value": "v"}}
+    call("assistant.validate.viewer", "post", f"/api/v1/aisc_assistant/conversations/{vic_c}/validate{here}",
+         as_viewer, who=viewer, json={"fingerprint": "f"})
+    call("assistant.someone_elses_conversation", "post",
+         f"/api/v1/aisc_assistant/conversations/{mine_c}/messages{here}", as_viewer, who=viewer, json={"text": "hi"})
+    answers["validate"] = {**answers["validate"], "project": B}
+    call("assistant.validate.other_project", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/validate{here}",
+         json={"fingerprint": "f"})
+    answers["messages"] = {"change": {"chart": bars.id, "changes": {"title": "Pass rate, renamed"}}}
+    call("assistant.change.other_hint", "post",
+         f"/api/v1/aisc_assistant/conversations/{mine_c}/messages?dashboard=aisc-{hex_b}-p", json={"text": "rename"})
+    call("assistant.change.editor", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/messages{here}",
+         json={"text": "rename it"})
+    answers["messages"] = {"remove": [{"chart": drift.id}]}
+    call("assistant.remove.editor", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/messages{here}",
+         json={"text": "remove it"})
+    seen["charts_title"] = db.session.query(Slice).get(bars.id).slice_name
+
     seen["titles"] = {"tile_a": f"aisc-{hex_a}-tile", "tile_b": f"aisc-{hex_b}-tile",
                       "planted": f"aisc-{hex_b}-planted"}
     seen["A"], seen["RID"] = A, RID
@@ -235,3 +347,40 @@ def test_an_import_into_another_projects_tile_or_a_planted_dashboard_is_403(seen
     assert seen["import.upload.tile_a"]["status"] == 400        # hers: refused only for the missing file
     assert seen["import.upload.tile_b"]["status"] == 403        # owned, but B's, and she is not B's editor
     assert seen["import.upload.planted"]["status"] == 403       # her own dashboard, naming B: no tile
+
+
+# Save to report and the chart assistant: who may write, on which project, with its ledger event
+
+def test_an_editors_save_writes_one_row_and_one_event_of_the_project(seen):
+    saved = seen["export.editor"]
+    assert saved["status"] == 201, saved["text"][:500]
+    assert saved["rows"] == 1 and [(e["pid"], e["action"]) for e in saved["events"]] == [
+        (seen["A"], "dashboard.export.saved")]
+
+
+def test_a_viewer_may_talk_to_the_assistant(seen):
+    assert seen["assistant.start.viewer"]["status"] == 201, seen["assistant.start.viewer"]["text"][:500]
+
+
+@pytest.mark.parametrize("name", ["assistant.change.viewer", "assistant.remove.viewer", "assistant.validate.viewer"])
+def test_a_viewer_may_not_change_remove_or_validate_through_the_assistant(seen, name):
+    assert seen[name]["status"] == 403, seen[name]["text"][:500]
+    assert seen[name]["events"] == []
+
+
+def test_a_conversation_started_by_someone_else_is_not_found(seen):
+    assert seen["assistant.someone_elses_conversation"]["status"] == 404
+
+
+def test_a_validated_proposal_of_another_project_is_refused(seen):
+    assert seen["assistant.validate.other_project"]["status"] == 403
+    assert seen["assistant.validate.other_project"]["events"] == []
+
+
+def test_an_editors_change_and_removal_through_the_assistant_reach_the_projects_ledger(seen):
+    for name, action in (("assistant.change.editor", "dashboard.assistant.changed"),
+                         ("assistant.remove.editor", "dashboard.assistant.removed")):
+        assert seen[name]["status"] == 200, seen[name]["text"][:500]
+        assert [(e["pid"], e["action"]) for e in seen[name]["events"]] == [(seen["A"], action)], name
+    assert seen["charts_title"] == "Pass rate, renamed"
+
