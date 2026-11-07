@@ -98,3 +98,52 @@ def test_a_change_from_the_assistant_is_taken_only_for_a_plot_on_the_dashboard()
     assert to_change("126", plots) is None
 
 
+
+
+# ── what each plot may change, and which plots show the same thing: decided here, sent with every plot ──
+
+VALID = {"title": "A name", "kind": "line", "axis_min": 0, "axis_max": 0.4, "percent": False}
+
+
+@pytest.mark.parametrize("viz, params", [("radar", RADAR), ("echarts_timeseries_bar", BAR),
+                                         ("echarts_timeseries_line", {**BAR, "viz_type": "echarts_timeseries_line"}),
+                                         ("table", {"viz_type": "table"}), ("pie", {"viz_type": "pie"})])
+def test_a_plot_takes_exactly_the_changes_it_is_said_to_take(viz, params):
+    from aisc_ext.charts import can_change
+    allowed = can_change(viz)
+    assert "title" in allowed
+    for key, value in VALID.items():
+        change = {key: "bar" if key == "kind" and viz.endswith("line") else value}
+        if key in allowed:
+            changed_params(viz, params, change)
+        else:
+            with pytest.raises(ValueError):
+                changed_params(viz, params, change)
+
+
+def test_percent_must_be_true_or_false():
+    with pytest.raises(ValueError):
+        changed_params("echarts_timeseries_bar", BAR, {"percent": "yes"})
+
+
+def _plot(i, viz, params, title="t", mine=False):
+    return i, {"title": title, "viz_type": viz, "params": params, "sql": "SELECT 1" if mine else None}
+
+
+def test_every_plot_is_sent_with_what_it_can_change_and_the_plots_that_show_the_same_thing():
+    from aisc_ext.assistant.service import plots_for_model
+    copy_in_percent = {**BAR, "y_axis_format": "SMART_NUMBER", "y_axis_bounds": [0, 1]}
+    found = dict([_plot(1, "echarts_timeseries_bar", BAR, "Default · Jailbreak success"),
+                  _plot(2, "radar", RADAR, "Jailbreak success (radar)"),
+                  _plot(3, "echarts_timeseries_bar", copy_in_percent, "My copy", mine=True),
+                  _plot(4, "table", {"viz_type": "table", "all_columns": ["a"]}, "Cases")])
+    out = plots_for_model([(1, False), (2, False), (3, True), (4, False), (9, False)], found)
+    assert [p["id"] for p in out] == [1, 2, 3, 4]                       # a chart no longer there is left out
+    by = {p["id"]: p for p in out}
+    assert by[1]["can_change"] == ["axis_max", "axis_min", "kind", "percent", "title"]
+    assert by[2]["can_change"] == ["axis_max", "percent", "title"] and by[4]["can_change"] == ["title"]
+    # the same value along the same axes, whatever the scale or the title: the same thing
+    assert by[1]["same_as"] == [3] and by[3]["same_as"] == [1]
+    assert by[2]["same_as"] == [] and by[4]["same_as"] == []
+    assert by[3]["sql"] == "SELECT 1" and "sql" not in by[1] and by[3]["mine"] is True
+    assert by[1]["kind"] == "bar" and by[1]["definition"]["x"] == "language"

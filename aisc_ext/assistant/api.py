@@ -14,9 +14,10 @@ from flask import g, request, session
 from flask_appbuilder.api import BaseApi, expose, protect, safe
 
 from aisc_ext import ledger
-from aisc_ext.assistant.service import (chart_uuid_of, description_from, distinct_sql, may_validate, ranges_from,
-                                        to_change, to_remove, validated_files, with_conversation)
-from aisc_ext.charts import changed_params, kind_of, place_chart, plot_definition, plots_on, without_chart
+from aisc_ext.assistant.service import (chart_uuid_of, description_from, distinct_sql, may_validate,
+                                        plots_for_model, ranges_from, to_change, to_remove, validated_files,
+                                        with_conversation)
+from aisc_ext.charts import changed_params, place_chart, plots_on, without_chart
 from aisc_ext.comments.api import _send_queued
 from aisc_ext.dashboards import open_dashboard
 
@@ -109,18 +110,17 @@ def _rows(database, sql):
 
 
 def _plots_on(dashboard) -> list[dict]:
-    """Every chart placed on this dashboard, as the model sees it: number, title, kind, whether the assistant made it,
-    and the query of those it made. Any of them may be changed in place or removed (by a project editor or admin)."""
+    """Every chart placed on this dashboard, as the model sees it (service.plots_for_model). Any of them may be changed
+    in place or removed (by a project editor or admin)."""
     from superset import db
     from superset.models.slice import Slice
 
     placed = plots_on(json.loads(dashboard.position_json or "{}"))
     ids = [i for i, _ in placed]
-    found = {c.id: c for c in db.session.query(Slice).filter(Slice.id.in_(ids))} if ids else {}
-    return [{"id": i, "title": found[i].slice_name, "kind": kind_of(found[i].viz_type), "mine": mine,
-             "definition": plot_definition(found[i].viz_type, json.loads(found[i].params or "{}")),
-             **({"sql": getattr(found[i].datasource, "sql", None) or ""} if mine else {})}
-            for i, mine in placed if i in found]
+    found = {c.id: {"title": c.slice_name, "viz_type": c.viz_type, "params": json.loads(c.params or "{}"),
+                    "sql": getattr(c.datasource, "sql", None)}
+             for c in db.session.query(Slice).filter(Slice.id.in_(ids))} if ids else {}
+    return plots_for_model(placed, found)
 
 
 def _change(dashboard, chart_id, changes) -> tuple[dict, dict, str]:

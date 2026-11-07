@@ -559,7 +559,16 @@ def starter_bundle(*, pid, plugin, label, dataset_uuid, dataset_name, database_u
 _KIND_OF_VIZ = {"radar": "radar", "echarts_timeseries_bar": "bar", "echarts_timeseries_line": "line", "table": "table"}
 #: Superset's chart type of the kinds a plot can switch between in place
 _VIZ_OF_KIND = {"bar": "echarts_timeseries_bar", "line": "echarts_timeseries_line"}
-_CHANGES = {"title", "kind", "axis_min", "axis_max", "percent"}
+#: what a plot of each kind can change in place; any other kind only its title
+_CAN_CHANGE = {"bar": ("axis_max", "axis_min", "kind", "percent", "title"),
+               "line": ("axis_max", "axis_min", "kind", "percent", "title"),
+               "radar": ("axis_max", "percent", "title")}
+
+
+def can_change(viz_type: str) -> list[str]:
+    """The changes a plot of this Superset chart type takes in place (changed_params): anything else needs a new
+    query, so a new chart."""
+    return list(_CAN_CHANGE.get(kind_of(viz_type), ("title",)))
 
 
 def kind_of(viz_type: str) -> str:
@@ -609,17 +618,17 @@ def changed_params(viz_type: str, params: dict, changes: dict) -> tuple[str, dic
     """A plot's settings with the assistant's changes made (a new copy): kind between bar and line, the axis's
     minimum and maximum, percentages. The title is the chart's name, set by the caller. ValueError for a change this
     plot cannot take: anything that would need a different query is a new chart (propose_chart)."""
-    unknown = set(changes) - _CHANGES
-    if unknown:
-        raise ValueError(f"cannot change {', '.join(sorted(unknown))}")
     kind = kind_of(viz_type)
+    allowed = can_change(viz_type)
+    if set(changes) - set(allowed):
+        raise ValueError(f"a {kind} can change only {', '.join(allowed)} in place; anything else needs a new chart")
     out = json.loads(json.dumps(params))
     for key in ("axis_min", "axis_max"):
         if key in changes and changes[key] is not None and (isinstance(changes[key], bool)
                                                             or not isinstance(changes[key], (int, float))):
             raise ValueError(f"{key} must be a number")
-    if kind not in ("radar", "bar", "line") and set(changes) - {"title"}:
-        raise ValueError(f"a {kind} has no axis or kind to change")
+    if "percent" in changes and not isinstance(changes["percent"], bool):
+        raise ValueError("percent must be true or false")
     if "kind" in changes and changes["kind"] != kind:
         if kind not in _VIZ_OF_KIND or changes["kind"] not in _VIZ_OF_KIND:
             raise ValueError(f"a {kind} cannot become a {changes['kind']} in place: it needs a new chart")

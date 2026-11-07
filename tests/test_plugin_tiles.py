@@ -644,4 +644,4 @@ def test_a_stored_change_the_default_chart_can_no_longer_take_keeps_only_its_tit
         assert sync(tiles, s, V2, "0.4.2")["slug"] == slug
     assert s.charts[table]["name"] == "Drift tests, my name"
     assert s.charts[table]["params"]["viz_type"] == "table"
-    assert table in caplog.text and "no axis or kind" in caplog.text
+    assert table in caplog.text and "can change only title" in caplog.text

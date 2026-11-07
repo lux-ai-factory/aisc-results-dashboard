@@ -145,6 +145,33 @@ def to_remove(asked, plots: list[dict]) -> list[tuple[int, str]] | None:
     return [(n, titles[n]) for n in dict.fromkeys(numbers)]
 
 
+#: a plot's scale: two plots that differ only in it show the same thing
+_SCALE = ("axis_min", "axis_max", "percent")
+
+
+def plots_for_model(placed, found: dict) -> list[dict]:
+    """Every chart placed on a dashboard (placed: plots_on's (id, made by the assistant)), as the model is told of it:
+    number, title, kind, whether the assistant made it (and then its query), its definition (never a value), the changes
+    it takes in place (can_change) and the other plots showing the same thing (same_as: the same definition but for the
+    scale, whatever their titles), about which the model asks before changing or removing one. found: id -> {title,
+    viz_type, params, sql} of the charts still there."""
+    out = []
+    for i, mine in placed:
+        if i not in found:
+            continue
+        chart = found[i]
+        out.append({"id": i, "title": chart["title"], "kind": charts.kind_of(chart["viz_type"]), "mine": mine,
+                    "definition": charts.plot_definition(chart["viz_type"], chart["params"]),
+                    "can_change": charts.can_change(chart["viz_type"]),
+                    **({"sql": chart.get("sql") or ""} if mine else {})})
+
+    def shows(plot):
+        return {k: v for k, v in plot["definition"].items() if k not in _SCALE}
+    for plot in out:
+        plot["same_as"] = [p["id"] for p in out if p is not plot and shows(p) == shows(plot)]
+    return out
+
+
 def to_change(asked, plots: list[dict]) -> tuple[int, dict] | None:
     """The plot to change and the changes, when the assistant named a plot on this dashboard and some change."""
     if not isinstance(asked, dict) or not isinstance(asked.get("changes"), dict) or not asked["changes"]:
