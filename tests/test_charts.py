@@ -460,7 +460,11 @@ def test_a_plugin_radar_reads_its_dimension_and_the_score_as_quoted_column_names
 
 # ── the chart assistant's plots in a dashboard's layout ──
 
-from aisc_ext.charts import made_chart_ids, place_chart, plots_on, without_chart  # noqa: E402
+from aisc_ext.charts import place_chart, plots_on, without_chart  # noqa: E402
+
+
+def made_chart_ids(position):
+    return [chart for chart, made in plots_on(position) if made]
 
 
 def test_the_chart_goes_under_assistant_charts_on_the_dashboard():
@@ -509,11 +513,6 @@ def test_removing_the_last_plot_it_made_takes_the_header_off_too():
     assert "HEADER-aisc-assistant" not in out["GRID_ID"]["children"]
 
 
-def test_a_plot_that_is_not_its_own_is_not_removed_unless_any_plot_may_be():
-    position = _dashboard_with_two_made_plots()
-    assert without_chart(position, 5) == position
-
-
 def test_a_replacement_takes_the_old_plots_place():
     position = _dashboard_with_two_made_plots()
     out = place_chart(position, chart_id=79, chart_uuid="u-3", name="First, as bars", replaces=77)
@@ -552,9 +551,9 @@ def test_removing_its_last_plot_on_a_tabbed_dashboard_takes_its_tab_off():
     assert without_chart(out, 77) == _tabbed_dashboard()
 
 
-def test_any_plot_on_the_dashboard_can_be_removed_when_asked_for_any():
+def test_any_plot_on_the_dashboard_is_taken_off_whoever_made_it():
     position = _dashboard_with_two_made_plots()
-    out = without_chart(position, 5, any_chart=True)
+    out = without_chart(position, 5)
     assert sorted(_charts(out)) == [77, 78] and "ROW-mine" not in out
     assert "ROW-mine" not in out["GRID_ID"]["children"]
 
@@ -569,7 +568,7 @@ def test_a_new_query_can_take_the_place_of_a_plot_the_assistant_did_not_make():
                 "ROW-d": {"type": "ROW", "id": "ROW-d", "children": ["CHART-aisc-d1"], "parents": ["ROOT_ID", "GRID_ID"]},
                 "CHART-aisc-d1": {"type": "CHART", "id": "CHART-aisc-d1", "children": [],
                                   "parents": ["ROOT_ID", "GRID_ID", "ROW-d"], "meta": {"chartId": 126, "uuid": "d"}}}
-    out = place_chart(position, chart_id=140, chart_uuid="n-1", name="per run", replaces=126, any_chart=True)
+    out = place_chart(position, chart_id=140, chart_uuid="n-1", name="per run", replaces=126)
     assert plots_on(out) == [(140, True)]
     assert out["ROW-d"]["children"] == ["CHART-aisc-assistant-n-1"]
 

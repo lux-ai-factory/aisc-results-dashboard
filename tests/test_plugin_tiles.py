@@ -569,7 +569,7 @@ def _take_off(s, slug, chart_uuid):
     and the dashboard remembers it was removed."""
     from aisc_ext.charts import without_chart
     d = s.dashboards[slug]
-    d["position"] = without_chart(d["position"], s.charts[chart_uuid]["id"], any_chart=True)
+    d["position"] = without_chart(d["position"], s.charts[chart_uuid]["id"])
     d["slices"].discard(s.charts[chart_uuid]["id"])
     s.removed.setdefault(slug, set()).add(chart_uuid)
 

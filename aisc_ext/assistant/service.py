@@ -133,10 +133,10 @@ def chart_uuid_of(files: dict) -> str:
     return next(k for k in files if k.startswith("charts/"))[len("charts/"):-len(".yaml")]
 
 
-def to_remove(asked, made: list[dict]) -> list[tuple[int, str]] | None:
+def to_remove(asked, plots: list[dict]) -> list[tuple[int, str]] | None:
     """The plots to take off, as (number, title) with the dashboard's own titles, when every plot the assistant named is
-    on this dashboard (made: every chart placed there, whoever made it); None otherwise (nothing is removed)."""
-    titles = {c["id"]: c["title"] for c in made}
+    on this dashboard (plots: every chart placed there, whoever made it); None otherwise (nothing is removed)."""
+    titles = {c["id"]: c["title"] for c in plots}
     if not isinstance(asked, list) or not asked:
         return None
     numbers = [a.get("chart") if isinstance(a, dict) else None for a in asked]

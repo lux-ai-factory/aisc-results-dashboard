@@ -361,13 +361,6 @@ def synced_node(node_id: str) -> bool:
     return node_id.startswith(SYNC_NODES) and ASSISTANT_MARK not in node_id
 
 
-def made_chart_ids(position: dict) -> list[int]:
-    """The charts the assistant made on a dashboard, in layout order (its "Assistant charts" header or tab stays while
-    one is left)."""
-    return [n["meta"]["chartId"] for k, n in position.items()
-            if k.startswith(_NODE) and isinstance(n, dict) and n.get("type") == "CHART"]
-
-
 def plots_on(position: dict) -> list[tuple[int, bool]]:
     """Every chart placed on a dashboard, in layout order, and whether the assistant made it."""
     out = []
@@ -378,20 +371,19 @@ def plots_on(position: dict) -> list[tuple[int, bool]]:
     return out
 
 
-def _node_of(position: dict, chart_id: int, any_chart: bool = False) -> str | None:
-    return next((k for k, n in position.items() if (any_chart or k.startswith(_NODE)) and isinstance(n, dict)
+def _node_of(position: dict, chart_id: int) -> str | None:
+    return next((k for k, n in position.items() if isinstance(n, dict)
                  and n.get("type") == "CHART" and (n.get("meta") or {}).get("chartId") == chart_id), None)
 
 
-def without_chart(position: dict, chart_id: int, any_chart: bool = False) -> dict:
-    """The layout with a chart taken off (wherever it is placed), its row with it when empty, and the "Assistant
-    charts" header or tab when no chart of the assistant is left. Only the assistant's own charts unless any_chart:
-    another chart leaves the layout unchanged."""
-    if _node_of(position, chart_id, any_chart) is None:
+def without_chart(position: dict, chart_id: int) -> dict:
+    """The layout with a chart taken off (wherever it is placed, whoever made it), its row with it when empty, and the
+    "Assistant charts" header or tab when no chart of the assistant is left."""
+    if _node_of(position, chart_id) is None:
         return position
     out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in position.items()}
     gone = set()
-    while (node := _node_of(out, chart_id, any_chart)) is not None:
+    while (node := _node_of(out, chart_id)) is not None:
         gone.add(node)
         row = (out[node].get("parents") or [None])[-1]
         del out[node]
@@ -400,7 +392,7 @@ def without_chart(position: dict, chart_id: int, any_chart: bool = False) -> dic
             if not out[row]["children"]:
                 del out[row]
                 gone.add(row)
-    if not made_chart_ids(out):
+    if not any(made for _, made in plots_on(out)):
         for own in (_HEADER, _TAB):
             if own in out:
                 del out[own]
@@ -411,11 +403,10 @@ def without_chart(position: dict, chart_id: int, any_chart: bool = False) -> dic
     return out
 
 
-def place_chart(position: dict, *, chart_id: int, chart_uuid: str, name: str, replaces: int | None = None,
-                any_chart: bool = False) -> dict:
+def place_chart(position: dict, *, chart_id: int, chart_uuid: str, name: str, replaces: int | None = None) -> dict:
     """The dashboard's layout with the chart in a row of its own under the "Assistant charts" header (in an "Assistant
-    charts" tab on a dashboard with tabs); a chart that
-    replaces one of the assistant's charts takes its place (or goes to the end when that one is no longer there)."""
+    charts" tab on a dashboard with tabs); a chart that replaces a plot of the dashboard, whoever made it, takes its
+    place (or goes to the end when that one is no longer there)."""
     out = dict(position)
     grid = next((k for k, n in out.items() if isinstance(n, dict) and n.get("type") == "GRID"), None)
     root = (out.get("ROOT_ID") or {}).get("children") or []
@@ -424,7 +415,7 @@ def place_chart(position: dict, *, chart_id: int, chart_uuid: str, name: str, re
         return out
     node = f"{_NODE}{chart_uuid[:8]}"
     meta = {"chartId": chart_id, "uuid": chart_uuid, "width": 12, "height": 60, "sliceName": name}
-    old = _node_of(out, replaces, any_chart) if replaces is not None else None
+    old = _node_of(out, replaces) if replaces is not None else None
     if old is not None and old != node:
         row = out[old]["parents"][-1]
         out[node] = {"type": "CHART", "id": node, "children": [], "parents": list(out[old]["parents"]),

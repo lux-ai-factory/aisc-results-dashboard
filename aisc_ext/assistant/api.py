@@ -167,7 +167,7 @@ def _take_off(dashboard_id, chart_id):
     from superset.models.dashboard import Dashboard
 
     fresh = db.session.query(Dashboard).get(dashboard_id)
-    fresh.position_json = json.dumps(without_chart(json.loads(fresh.position_json or "{}"), chart_id, any_chart=True))
+    fresh.position_json = json.dumps(without_chart(json.loads(fresh.position_json or "{}"), chart_id))
     fresh.slices = [c for c in fresh.slices if c.id != chart_id]
     _forget_default(fresh.slug, chart_id)
     return fresh
@@ -336,7 +336,7 @@ class AssistantApi(BaseApi):
         if chart not in fresh.slices:
             fresh.slices.append(chart)
         fresh.position_json = json.dumps(place_chart(position, chart_id=chart.id, chart_uuid=uid,
-                                                     name=chart.slice_name, replaces=replaces, any_chart=True))
+                                                     name=chart.slice_name, replaces=replaces))
         if replaces is not None:
             _forget_default(fresh.slug, replaces)
             fresh.slices = [c for c in fresh.slices if c.id != replaces]

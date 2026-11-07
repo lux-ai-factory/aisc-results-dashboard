@@ -194,6 +194,5 @@ def test_a_numeric_labels_range_keeps_its_fractions_and_whole_ranges_stay_whole(
 def test_the_service_keeps_only_the_assistants_own_rules_and_reexports_no_superset_format():
     """Superset's formats have one home, charts.py: callers import them from there."""
     from aisc_ext.assistant import service
-    for name in ("changed_params", "kind_of", "plot_definition", "place_chart", "plots_on", "without_chart",
-                 "made_chart_ids"):
+    for name in ("changed_params", "kind_of", "plot_definition", "place_chart", "plots_on", "without_chart"):
         assert not hasattr(service, name), name
