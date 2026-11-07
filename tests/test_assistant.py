@@ -253,3 +253,14 @@ def test_any_plot_on_the_dashboard_can_be_removed_when_asked_for_any():
 def test_every_plot_on_the_dashboard_is_listed_saying_which_the_assistant_made():
     from aisc_ext.assistant.service import plots_on
     assert plots_on(_dashboard_with_two_made_plots()) == [(5, False), (77, True), (78, True)]
+
+
+def test_the_session_keeps_only_the_most_recent_conversations():
+    """The conversations live in the signed session cookie: it must not grow past a browser's 4 KB limit."""
+    from aisc_ext.assistant.service import MAX_CONVERSATIONS, with_conversation
+    held = {}
+    for n in range(200):
+        held = with_conversation(held, f"conversation-{n}", n)
+    assert len(held) == MAX_CONVERSATIONS <= 20
+    assert list(held) == [f"conversation-{n}" for n in range(200 - MAX_CONVERSATIONS, 200)]
+    assert held["conversation-199"] == 199

@@ -15,7 +15,8 @@ from flask_appbuilder.api import BaseApi, expose, protect, safe
 from aisc_ext import ledger
 from aisc_ext.assistant.service import (chart_uuid_of, description_from, kind_of, may_validate,
                                         changed_params, distinct_sql, plot_definition, plots_on, to_change,
-                                        place_chart, to_remove, validated_files, without_chart)
+                                        place_chart, to_remove, validated_files, with_conversation,
+                                        without_chart)
 from aisc_ext.comments.api import _send_queued
 from aisc_ext.dashboards import open_dashboard
 
@@ -215,7 +216,7 @@ class AssistantApi(BaseApi):
                                   {"description": description_from([t[0] for t in targets], metrics, _ranges(database))})
         if status != 201:
             return self.response(status, **data)
-        session[SESSION_KEY] = {**(session.get(SESSION_KEY) or {}), data["conversation"]: dashboard.id}
+        session[SESSION_KEY] = with_conversation(session.get(SESSION_KEY), data["conversation"], dashboard.id)
         return self.response(201, conversation=data["conversation"])
 
     @expose("/conversations/<cid>/messages", methods=["POST"])

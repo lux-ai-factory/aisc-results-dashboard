@@ -45,6 +45,18 @@ def description_from(targets, rows, ranges=None) -> dict:
     return {"targets": list(targets), "metrics": [metrics[m] for m in sorted(metrics)]}
 
 
+#: conversations a person's session remembers (the signed session cookie must stay under a browser's 4 KB)
+MAX_CONVERSATIONS = 10
+
+
+def with_conversation(held: dict | None, cid: str, dashboard_id) -> dict:
+    """The session's conversations (id -> dashboard) with a new one added last, only the MAX_CONVERSATIONS most
+    recent kept: an older conversation is started again by the panel."""
+    out = {k: v for k, v in (held or {}).items() if k != cid}
+    out[cid] = dashboard_id
+    return dict(list(out.items())[-MAX_CONVERSATIONS:])
+
+
 def may_validate(roles, project_hex: str) -> bool:
     """Validating is an editor's or an admin's act (D3)."""
     return "Admin" in roles or f"AiscProjectEditor_{project_hex}" in roles
