@@ -169,7 +169,8 @@ def kind_of(viz_type: str) -> str:
 
 
 def made_chart_ids(position: dict) -> list[int]:
-    """The charts the assistant made on a dashboard, in layout order: the only ones it may change or remove."""
+    """The charts the assistant made on a dashboard, in layout order (its "Assistant charts" header or tab stays while
+    one is left)."""
     return [n["meta"]["chartId"] for k, n in position.items()
             if k.startswith(_NODE) and isinstance(n, dict) and n.get("type") == "CHART"]
 

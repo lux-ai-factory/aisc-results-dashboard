@@ -110,7 +110,7 @@ def _rows(database, sql):
 
 def _plots_on(dashboard) -> list[dict]:
     """Every chart placed on this dashboard, as the model sees it: number, title, kind, whether the assistant made it,
-    and the query of those it made (the only ones it may change; it may remove any)."""
+    and the query of those it made. Any of them may be changed in place or removed (by a project editor or admin)."""
     from superset import db
     from superset.models.slice import Slice
 
@@ -125,7 +125,8 @@ def _plots_on(dashboard) -> list[dict]:
 
 def _change(dashboard, chart_id, changes) -> tuple[dict, dict, str]:
     """Changes one chart in place (settings and name, never its query) and, for a plugin's default chart, remembers
-    the change so a sync keeps it. (before, after, title); ValueError when the chart cannot take it."""
+    the change so a sync keeps it. (before, after, title); ValueError when the chart cannot take it. Any chart on the
+    dashboard: the caller checks only that the person is an editor or admin of the project, not Superset ownership."""
     from superset import db
     from superset.models.slice import Slice
 
@@ -160,7 +161,8 @@ def _forget_default(slug, chart_id):
 
 def _take_off(dashboard_id, chart_id):
     """Takes one chart off a dashboard (layout and chart list) and remembers it, so a plugin tile's sync does not put
-    a default back; the chart stays in Superset."""
+    a default back; the chart stays in Superset. Any chart on the dashboard, whoever owns it: the caller checks only
+    that the person is an editor or admin of the project."""
     from superset import db
     from superset.models.dashboard import Dashboard
 
@@ -220,7 +222,9 @@ class AssistantApi(BaseApi):
     @protect(allow_browser_login=True)
     @safe
     def message(self, cid):
-        """Ask for a chart or a change.
+        """Ask for a chart or a change. Anyone who may open the dashboard may ask; a change or a removal is made only
+        for an editor or admin of the project, on any plot of the dashboard (other people's charts and plugin
+        defaults too: Superset ownership is not checked, by design).
         ---
         post:
           responses:
@@ -280,7 +284,8 @@ class AssistantApi(BaseApi):
     @protect(allow_browser_login=True)
     @safe
     def validate(self, cid):
-        """Validate a proposal: the same query, unchanged, becomes a chart on the project's data.
+        """Validate a proposal: the same query, unchanged, becomes a chart on the project's data. An editor's or an
+        admin's act; a proposal replacing a plot may replace any plot on the dashboard, whoever owns it.
         ---
         post:
           responses:
