@@ -123,7 +123,7 @@ def test_the_dashboard_side_imports_only_what_the_dashboard_image_has():
     """A module the image lacks makes Superset skip every AISC extension at start (comments, reviews, exports)."""
     import ast
     from pathlib import Path
-    allowed = {"json", "os", "urllib", "flask", "flask_appbuilder", "aisc_ext", "superset", "hashlib", "uuid", "yaml"}
+    allowed = {"json", "os", "urllib", "flask", "flask_appbuilder", "aisc_ext", "superset", "hashlib", "re", "uuid", "yaml"}
     for name in ("api.py", "service.py"):
         tree = ast.parse((Path(__file__).resolve().parents[1] / "aisc_ext" / "assistant" / name).read_text())
         for node in ast.walk(tree):

@@ -142,8 +142,22 @@ def test_every_plot_is_sent_with_what_it_can_change_and_the_plots_that_show_the_
     by = {p["id"]: p for p in out}
     assert by[1]["can_change"] == ["axis_max", "axis_min", "kind", "percent", "title"]
     assert by[2]["can_change"] == ["axis_max", "percent", "title"] and by[4]["can_change"] == ["title"]
-    # the same value along the same axes, whatever the scale or the title: the same thing
-    assert by[1]["same_as"] == [3] and by[3]["same_as"] == [1]
-    assert by[2]["same_as"] == [] and by[4]["same_as"] == []
+    # the same value along the same axes, whatever the scale or the title (3); a title of the same subject (2)
+    assert by[1]["same_as"] == [2, 3] and by[3]["same_as"] == [1]
+    assert by[2]["same_as"] == [1] and by[4]["same_as"] == []
     assert by[3]["sql"] == "SELECT 1" and "sql" not in by[1] and by[3]["mine"] is True
     assert by[1]["kind"] == "bar" and by[1]["definition"]["x"] == "language"
+
+
+def test_plots_whose_titles_show_the_same_subject_are_alike_whatever_their_definitions():
+    """StrongREJECT: the plugin's default radar and the assistant's own scaled radar of the same subject are built
+    differently, yet a request about 'jailbreak success by language' could mean either: the model must ask."""
+    from aisc_ext.assistant.service import plots_for_model
+    own = {**RADAR, "metrics": [{"expressionType": "SQL", "label": "en", "sqlExpression": "MAX(v)"}]}
+    found = dict([_plot(126, "echarts_timeseries_bar", BAR, "Default · Jailbreak success by language"),
+                  _plot(127, "radar", RADAR, "Default · Jailbreak success by language (radar)"),
+                  _plot(138, "radar", own, "Jailbreak success by language (scaled 40%)", mine=True),
+                  _plot(140, "table", {"viz_type": "table"}, "Drift per feature")])
+    by = {p["id"]: p for p in plots_for_model([(126, False), (127, False), (138, True), (140, False)], found)}
+    assert by[127]["same_as"] == [126, 138] and by[138]["same_as"] == [126, 127]
+    assert by[126]["same_as"] == [127, 138] and by[140]["same_as"] == []

@@ -9,6 +9,7 @@ answers never goes to the model (D2). No count of rows. Pure: no Superset import
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
 
 from aisc_ext import charts
@@ -144,11 +145,18 @@ def to_remove(asked, plots: list[dict]) -> list[tuple[int, str]] | None:
 _SCALE = ("axis_min", "axis_max", "percent")
 
 
+def subject(title) -> str:
+    """What a plot shows, from its title: lower case, without a leading "Default ·", parentheses and numbers."""
+    text = re.sub(r"^\s*default\s*·\s*", "", str(title or "").lower())
+    text = re.sub(r"\([^)]*\)|[\d%]+", " ", text)
+    return " ".join(text.split())
+
+
 def plots_for_model(placed, found: dict) -> list[dict]:
     """Every chart placed on a dashboard (placed: plots_on's (id, made by the assistant)), as the model is told of it:
     number, title, kind, whether the assistant made it (and then its query), its definition (never a value), the changes
     it takes in place (can_change) and the other plots showing the same thing (same_as: the same definition but for the
-    scale, whatever their titles), about which the model asks before changing or removing one. found: id -> {title,
+    scale, or titles showing the same subject), about which the model asks before changing or removing one. found: id -> {title,
     viz_type, params, sql} of the charts still there."""
     out = []
     for i, mine in placed:
@@ -163,7 +171,8 @@ def plots_for_model(placed, found: dict) -> list[dict]:
     def shows(plot):
         return {k: v for k, v in plot["definition"].items() if k not in _SCALE}
     for plot in out:
-        plot["same_as"] = [p["id"] for p in out if p is not plot and shows(p) == shows(plot)]
+        plot["same_as"] = [p["id"] for p in out if p is not plot and (
+            shows(p) == shows(plot) or (subject(p["title"]) and subject(p["title"]) == subject(plot["title"])))]
     return out
 
 
