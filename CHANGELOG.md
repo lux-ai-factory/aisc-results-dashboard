@@ -1,5 +1,13 @@
 # Changelog of the AISC results dashboard overlay (newest first).
 
+## Unreleased: row counts
+
+- Each chart on a dashboard shows the number of rows it draws ("N rows", "1 row") in a muted line under it,
+  read from the `rowcount` of Superset's own `/api/v1/chart/data` answers (`branding/save-to-report/row-counts.js`);
+  a new filter value gives a new count. Check: `tests/test_row_counts.py`.
+- Save to report sends each plot's count, and `aisc_report_plot` keeps it in the new nullable column `rows`,
+  added at start to tables made before it. Check: `tests/test_report_exports.py`, `tests/test_routes_in_superset.py`.
+
 ## 2026-10-19: closed submissions as they were answered
 
 - `controls_answers_<hex>` shows a closed submission's answers with their questions as they were when it was

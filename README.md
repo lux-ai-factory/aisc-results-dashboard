@@ -324,8 +324,9 @@ aisc_ext/               the extension package (mounted next to it)
   ledger.py             ledger events and their outbox
   branding.py           branding from env vars
 branding/               logos, served at /static/assets/branding/
-  save-to-report/       the Save to report button, the chart assistant panel and the ECharts they draw with
-templates_override/     Superset's tail_js_custom_extra.html hook, which loads those two scripts by version
+  save-to-report/       the row count under each chart ("N rows", from Superset's chart-data answers), the
+                        Save to report button, the chart assistant panel and the ECharts they draw with
+templates_override/     Superset's tail_js_custom_extra.html hook, which loads those scripts by version
 scripts/                bootstrap.sh (standalone setup), verify_review.py (in-container check)
 tests/                  unit tests and the Postgres tests (test_project_datasets_db.py, one in test_ledger.py)
 Dockerfile              stock Superset image plus Authlib and psycopg2-binary
@@ -340,8 +341,9 @@ DECISIONS.md            why the design is the way it is
 - There are no migrations of its own. The tables `aisc_comment`, `aisc_review_request`,
   `aisc_ledger_outbox`, `aisc_made_tile`, `aisc_removed_chart`, `aisc_changed_chart` and
   `aisc_report_plot` are created in Superset's metadata database at startup if missing
-  (`_install_extension` in `superset_config.py`), and roles and permissions are refreshed at
-  every start.
+  (`_install_extension` in `superset_config.py`); columns added later (`aisc_comment.deleted_at`,
+  `aisc_report_plot.rows`, the rows a saved plot's chart drew) are added there too, and roles and
+  permissions are refreshed at every start.
 - Upgrading Superset: change the tag in the `Dockerfile`, rebuild, and run
   `superset db upgrade && superset init` (in the stack, `dashboard-migrate` does this).
   Then check the embedding CSP and run `scripts/verify_review.py`.
