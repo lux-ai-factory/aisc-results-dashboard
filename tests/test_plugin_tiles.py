@@ -618,3 +618,15 @@ def test_a_default_chart_changed_with_the_assistant_keeps_its_change_through_a_s
     assert s.charts[psi]["params"]["y_axis_bounds"] == [None, 0.4]
     drift = charts.chart_uuid(PID, PLUGIN, 0, "Drift Score")
     assert "y_axis_bounds" not in s.charts[drift]["params"]
+
+
+def test_adding_radars_keeps_the_uuid_every_plugin_chart_had_before():
+    """A radar is added after its bar chart; the plugin's own charts keep the uuid they had before radars existed
+    (their place in the plugin's list), so the first sync with radars deletes none of them."""
+    s = Superset()
+    sync(tiles=importlib.import_module("aisc_ext.plugin_tiles"), s=s, visualizations=[V1[1], V2[1]])
+    charts = importlib.import_module("aisc_ext.charts")
+    table = charts.chart_uuid(PID, PLUGIN, 1, "Drift tests per feature")
+    assert table in s.charts and s.charts[table]["params"]["viz_type"] == "table"
+    placed, linked = on_dashboard(s, charts.plugin_slug(PID, PLUGIN))
+    assert table in placed and table in linked and len(placed) == 3

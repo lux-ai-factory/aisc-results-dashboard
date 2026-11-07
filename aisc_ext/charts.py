@@ -56,17 +56,18 @@ RADAR_SUFFIX = " (radar)"
 def with_radars(visualizations: list[dict]) -> list[dict]:
     """The plugin's charts, each bar chart along one dimension followed by a radar of the same data: one axis
     per value of that dimension, one polygon per run, so runs (on two targets, say) are compared at a glance.
-    A radar already there is not added again."""
+    A radar already there is not added again. An added radar names its bar chart's place in the plugin's list
+    (radar_of), so default_uuids leaves every plugin chart the uuid it had before radars were added."""
     have = {(v.get("title") or "") for v in visualizations if _value(v.get("chart_type")) == "radar"}
     out = []
-    for v in visualizations:
+    for index, v in enumerate(visualizations):
         out.append(v)
         groups = v.get("group_by_dimensions") or []
         title = (v.get("title") or ", ".join(v.get("metrics") or [])) + RADAR_SUFFIX
         if _value(v.get("chart_type")) == "bars" and len(groups) == 1 and title not in have:
             out.append({"chart_type": "radar", "metrics": list(v.get("metrics") or []), "title": title,
                         "group_by_dimensions": list(groups), "value_format": v.get("value_format"),
-                        "filter_dimensions": v.get("filter_dimensions")})
+                        "filter_dimensions": v.get("filter_dimensions"), "radar_of": index})
             have.add(title)
     return out
 
@@ -170,8 +171,21 @@ def _slug(pid: str, plugin: str, keeps) -> str:
     return f"aisc-{hexed}-{name}"[:255].rstrip("-") if name else f"aisc-{hexed}"
 
 
-def chart_uuid(pid: str, plugin: str, index: int, title: str) -> str:
+def chart_uuid(pid: str, plugin: str, index: int | str, title: str) -> str:
     return str(uuid.uuid5(_NAMESPACE, f"chart:{pid}:{plugin}:{index}:{title}"))
+
+
+def default_uuids(pid: str, plugin: str, visualizations: list[dict]) -> list[str]:
+    """The uuid of each default chart (with_radars' list): a plugin's chart by its place in the plugin's own list, an
+    added radar by its bar chart's place, so adding a radar never changes the uuid of the charts after it."""
+    out, index = [], 0
+    for v in visualizations:
+        if "radar_of" in v:
+            out.append(chart_uuid(pid, plugin, f"{v['radar_of']}{RADAR_SUFFIX}", v.get("title") or ""))
+        else:
+            out.append(chart_uuid(pid, plugin, index, v.get("title") or ""))
+            index += 1
+    return out
 
 
 def starter_uuid(pid: str, plugin: str) -> str:
@@ -361,9 +375,8 @@ def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset
     files.update(_source_files(dataset_uuid=dataset_uuid, dataset_name=dataset_name, database_uuid=database_uuid,
                                database_name=database_name, sqlalchemy_uri=sqlalchemy_uri, columns=columns))
     placed = []
-    for index, v in enumerate(visualizations):
+    for v, cid in zip(visualizations, default_uuids(pid, plugin, visualizations)):
         viz_type, params, description = chart_settings(v, plugin_label=label, columns=columns, values=values)
-        cid = chart_uuid(pid, plugin, index, v.get("title") or "")
         if cid in skip:                 # removed by someone: neither written nor placed (its index is kept)
             continue
         params.update({"aisc_project": pid, "aisc_plugin": plugin, "aisc_chart_id": cid})

@@ -174,8 +174,7 @@ def _sync(pid, project_name, plugin, label, version, visualizations, *, store, i
                           skip=removed, changed=store.changed_charts(slug), **common)
     importer.import_dashboard(files)
 
-    defaults = [u for u in (charts.chart_uuid(pid, plugin, i, v.get("title") or "") for i, v in enumerate(visualizations))
-                if u not in removed]
+    defaults = [u for u in charts.default_uuids(pid, plugin, visualizations) if u not in removed]
     people = [n["meta"]["uuid"] for n in kept.values() if n.get("type") == "CHART"]
     store.link_charts(slug, defaults + people)
     store.delete_charts(sorted(previous_defaults - set(defaults) - removed))
