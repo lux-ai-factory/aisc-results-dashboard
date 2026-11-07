@@ -326,26 +326,30 @@ class AssistantApi(BaseApi):
                                     description=chosen.get("description", ""), author=g.user.username)
         except ValueError as exc:
             return self.response_400(message=str(exc))
-        store = SupersetStore()
-        store.import_charts(files)
-        uid = chart_uuid_of(files)
-        chart = db.session.query(Slice).filter_by(uuid=uid).one()
-        chart.owners = list({*chart.owners, g.user})
-        fresh = db.session.query(Dashboard).get(dashboard.id)
-        position = json.loads(fresh.position_json or "{}")
-        replaces = chosen.get("replaces")
-        replaces = replaces if replaces in [i for i, _ in plots_on(position)] and replaces != chart.id else None
-        if chart not in fresh.slices:
-            fresh.slices.append(chart)
-        fresh.position_json = json.dumps(place_chart(position, chart_id=chart.id, chart_uuid=uid,
-                                                     name=chart.slice_name, replaces=replaces))
-        if replaces is not None:
-            _forget_default(fresh.slug, replaces)
-            fresh.slices = [c for c in fresh.slices if c.id != replaces]
-            chosen = {**chosen, "replaces": replaces}
-        ledger.emit(db.session.connection(), pid, "dashboard.assistant.validated",
-                    ledger.assistant_validated(chart.id, chosen, slug=fresh.slug,
-                                               request=ledger.request_id(request.headers, request.environ)))
-        db.session.commit()
+        try:
+            # the chart is built in this request's transaction: chart, layout and ledger event commit together
+            SupersetStore().stage_charts(files)
+            uid = chart_uuid_of(files)
+            chart = db.session.query(Slice).filter_by(uuid=uid).one()
+            chart.owners = list({*chart.owners, g.user})
+            fresh = db.session.query(Dashboard).get(dashboard.id)
+            position = json.loads(fresh.position_json or "{}")
+            replaces = chosen.get("replaces")
+            replaces = replaces if replaces in [i for i, _ in plots_on(position)] and replaces != chart.id else None
+            if chart not in fresh.slices:
+                fresh.slices.append(chart)
+            fresh.position_json = json.dumps(place_chart(position, chart_id=chart.id, chart_uuid=uid,
+                                                         name=chart.slice_name, replaces=replaces))
+            if replaces is not None:
+                _forget_default(fresh.slug, replaces)
+                fresh.slices = [c for c in fresh.slices if c.id != replaces]
+                chosen = {**chosen, "replaces": replaces}
+            ledger.emit(db.session.connection(), pid, "dashboard.assistant.validated",
+                        ledger.assistant_validated(chart.id, chosen, slug=fresh.slug,
+                                                   request=ledger.request_id(request.headers, request.environ)))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            raise
         _send_queued()
         return self.response(201, chart=chart.id, fingerprint=chosen["fingerprint"], replaced=replaces)

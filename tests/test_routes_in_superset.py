@@ -260,6 +260,60 @@ with app.app_context():
          json={"text": "remove it"})
     seen["charts_title"] = db.session.query(Slice).get(bars.id).slice_name
 
+    # validate: the chart, its place on the dashboard and its ledger event commit together, or not at all
+    import hashlib
+
+    from superset.connectors.sqla.models import SqlaTable
+    from superset.models.core import Database
+
+    from aisc_ext.assistant.service import chart_uuid_of, validated_files
+
+    project_db = Database(database_name="project-a", sqlalchemy_uri="sqlite://")
+    db.session.add(project_db)
+    db.session.commit()
+    source = {"database_name": "project-a", "database_uuid": str(project_db.uuid), "sqlalchemy_uri": "sqlite://"}
+    assistant_api._database = lambda pid: (source, project_db)
+    assistant_api._rows = lambda database, sql: (["c", "v"], [])
+
+    def proposal(title):
+        sql = f"SELECT 1 AS c, 2 AS v -- {title}"
+        return {"project": A, "sql": sql, "fingerprint": hashlib.sha256(sql.encode()).hexdigest(),
+                "chart": {"kind": "table", "title": title, "category": "c", "value": "v"}}
+
+    def stored(p):
+        """(chart, dataset) of this proposal as committed: read on a connection of its own."""
+        files = validated_files(source, pid=A, sql=p["sql"], fingerprint=p["fingerprint"], chart=p["chart"],
+                                columns=["c", "v"], axes=[], description="", author="ada")
+        uid = uuid.UUID(chart_uuid_of(files))
+        name = next(k for k in files if k.startswith("datasets/")).rsplit("/", 1)[-1][:-len(".yaml")]
+        with db.engine.connect() as conn:
+            chart_row = conn.execute(select(Slice.__table__.c.id).where(Slice.__table__.c.uuid == uid)).first()
+            dataset_row = conn.execute(select(SqlaTable.__table__.c.id)
+                                       .where(SqlaTable.__table__.c.table_name == name)).first()
+            layout = conn.execute(select(Dashboard.__table__.c.position_json)
+                                  .where(Dashboard.__table__.c.id == with_charts)).scalar()
+        return {"chart": chart_row[0] if chart_row else None, "dataset": dataset_row is not None,
+                "placed": bool(chart_row) and f'"chartId": {chart_row[0]}' in (layout or "")}
+
+    broken = proposal("Fails after the import")
+    answers["validate"] = broken
+    placing = assistant_api.place_chart
+
+    def fails(*args, **kwargs):
+        raise RuntimeError("the layout could not be written")
+
+    assistant_api.place_chart = fails
+    call("assistant.validate.fails_after_import", "post",
+         f"/api/v1/aisc_assistant/conversations/{mine_c}/validate{here}", json={"fingerprint": broken["fingerprint"]})
+    assistant_api.place_chart = placing
+    seen["assistant.validate.fails_after_import"]["stored"] = stored(broken)
+    db.session.rollback()
+    good = proposal("Made by validate")
+    answers["validate"] = good
+    call("assistant.validate.editor", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/validate{here}",
+         json={"fingerprint": good["fingerprint"]})
+    seen["assistant.validate.editor"]["stored"] = stored(good)
+
     seen["titles"] = {"tile_a": f"aisc-{hex_a}-tile", "tile_b": f"aisc-{hex_b}-tile",
                       "planted": f"aisc-{hex_b}-planted"}
     seen["A"], seen["RID"] = A, RID
@@ -415,3 +469,19 @@ def test_an_editors_change_and_removal_through_the_assistant_reach_the_projects_
         assert [(e["pid"], e["action"]) for e in seen[name]["events"]] == [(seen["A"], action)], name
     assert seen["charts_title"] == "Pass rate, renamed"
 
+
+
+# Validate: the chart is built in the request's own transaction, so chart, layout and ledger event commit together
+
+def test_a_validated_chart_its_place_and_its_event_commit_together(seen):
+    made = seen["assistant.validate.editor"]
+    assert made["status"] == 201, made["text"][:3000]
+    assert made["stored"]["chart"] and made["stored"]["dataset"] and made["stored"]["placed"], made["stored"]
+    assert [(e["pid"], e["action"]) for e in made["events"]] == [(seen["A"], "dashboard.assistant.validated")]
+
+
+def test_a_validate_that_fails_after_the_import_leaves_no_chart_dataset_or_event(seen):
+    failed = seen["assistant.validate.fails_after_import"]
+    assert failed["status"] == 500, failed["text"][:3000]
+    assert failed["stored"] == {"chart": None, "dataset": False, "placed": False}
+    assert failed["events"] == []

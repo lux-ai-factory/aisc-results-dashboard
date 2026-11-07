@@ -766,20 +766,33 @@ class SupersetStore:
         self._db().session.commit()
 
     # ---- the importer: Superset's own import, as the bridge's service account ----
-    def _as_bridge(self, command):
+    def _as_bridge(self, step):
         from flask import g  # type: ignore
 
         before = getattr(g, "user", None)
         g.user = self._sm().find_user(username=BRIDGE_USER)
         try:
-            command.run()
+            step()
         finally:
             g.user = before
 
     def import_charts(self, files):
         from superset.commands.chart.importers.dispatcher import ImportChartsCommand  # type: ignore
 
-        self._as_bridge(ImportChartsCommand(files, overwrite=True))
+        self._as_bridge(ImportChartsCommand(files, overwrite=True).run)
+
+    def stage_charts(self, files):
+        """Superset's chart import (its v1 command: the files' format, checked, then the connection, dataset and
+        chart written) without its commit: the rows join the session's transaction, so the caller's own writes and
+        ledger event commit or roll back with them."""
+        from superset.commands.chart.importers.v1 import ImportChartsCommand  # type: ignore
+
+        command = ImportChartsCommand(files, overwrite=True)
+
+        def stage():
+            command.validate()
+            command._import(command._configs, command.overwrite)
+        self._as_bridge(stage)
 
     def import_dashboard(self, files):
         from superset.commands.dashboard.importers.dispatcher import ImportDashboardsCommand  # type: ignore
