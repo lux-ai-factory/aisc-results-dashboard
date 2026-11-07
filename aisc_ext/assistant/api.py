@@ -14,7 +14,7 @@ from flask_appbuilder.api import BaseApi, expose, protect, safe
 
 from aisc_ext import ledger
 from aisc_ext.assistant.service import (chart_uuid_of, description_from, kind_of, may_validate,
-                                        changed_params, plot_definition, plots_on, to_change,
+                                        changed_params, distinct_sql, plot_definition, plots_on, to_change,
                                         place_chart, to_remove, validated_files, without_chart)
 from aisc_ext.comments.api import _send_queued
 from aisc_ext.dashboards import open_dashboard
@@ -313,7 +313,7 @@ class AssistantApi(BaseApi):
         columns, _ = _rows(database, f"SELECT * FROM ({chosen['sql']}) AS validated LIMIT 0")
         axes = []
         if chosen["chart"]["kind"] == "radar":
-            _, found = _rows(database, f"SELECT DISTINCT {chosen['chart']['category']} FROM ({chosen['sql']}) AS v ORDER BY 1")
+            _, found = _rows(database, distinct_sql(chosen["chart"]["category"], chosen["sql"]))
             axes = [str(r[0]) for r in found if r[0] is not None][:60]
         try:
             files = validated_files(source, pid=pid, sql=chosen["sql"], fingerprint=chosen["fingerprint"],

@@ -4,8 +4,8 @@ import hashlib
 
 import pytest
 
-from aisc_ext.assistant.service import (MAX_LABELS, chart_params, description_from, kind_of, made_chart_ids, may_validate,
-                                        to_remove,
+from aisc_ext.assistant.service import (MAX_LABELS, chart_params, description_from, distinct_sql, kind_of,
+                                        made_chart_ids, may_validate, to_remove,
                                         validated_files, without_chart,
                                         place_chart)
 
@@ -44,7 +44,7 @@ def test_a_radar_has_one_axis_per_category_and_one_polygon_per_series():
     p = chart_params({"kind": "radar", "title": "t", "category": "category", "series": "series", "value": "value"},
                      axes=["Age", "Gender", "Status"])
     assert p["viz_type"] == "radar" and p["groupby"] == ["series"] and len(p["metrics"]) == 3
-    assert "category = 'Age'" in p["metrics"][0]["sqlExpression"] and p["legendOrientation"] == "bottom"
+    assert "\"category\" = 'Age'" in p["metrics"][0]["sqlExpression"] and p["legendOrientation"] == "bottom"
 
 
 def test_a_bar_and_a_line_put_the_category_on_the_axis():
@@ -55,7 +55,27 @@ def test_a_bar_and_a_line_put_the_category_on_the_axis():
 
 def test_a_quote_in_an_axis_cannot_break_the_expression():
     p = chart_params({"kind": "radar", "title": "t", "category": "c", "value": "v"}, axes=["it's", "b", "c"])
-    assert "c = 'it''s'" in p["metrics"][0]["sqlExpression"]
+    assert "\"c\" = 'it''s'" in p["metrics"][0]["sqlExpression"]
+
+
+def test_a_column_name_carrying_sql_stays_one_quoted_name_in_every_query():
+    """The radar's category and the value are result columns the model named: a quoted alias can hold any text,
+    which must stay a column name and never become SQL the assistant's table check did not see."""
+    alias = 'label FROM project.secret_table --'
+    assert distinct_sql(alias, "SELECT 1") == \
+        'SELECT DISTINCT "label FROM project.secret_table --" FROM (SELECT 1) AS v ORDER BY 1'
+    assert distinct_sql('a"b', "SELECT 1").startswith('SELECT DISTINCT "a""b" FROM')
+    p = chart_params({"kind": "radar", "title": "t", "category": alias, "value": 'v" FROM x --'}, axes=["a"])
+    assert p["metrics"][0]["sqlExpression"] == \
+        'MAX(CASE WHEN "label FROM project.secret_table --" = \'a\' THEN "v"" FROM x --" END)'
+
+
+def test_a_column_name_with_capitals_or_spaces_is_read_as_that_column():
+    p = chart_params({"kind": "bar", "title": "t", "category": "Model", "value": "Pass rate"}, axes=[])
+    assert p["metrics"][0]["sqlExpression"] == 'MAX("Pass rate")' and p["metrics"][0]["label"] == "Pass rate"
+    radar = chart_params({"kind": "radar", "title": "t", "category": "Model", "value": "Pass rate"}, axes=["m"])
+    assert radar["metrics"][0]["sqlExpression"] == 'MAX(CASE WHEN "Model" = \'m\' THEN "Pass rate" END)'
+    assert distinct_sql("Model", "SELECT 1").startswith('SELECT DISTINCT "Model" FROM')
 
 
 def test_the_validated_chart_reads_exactly_the_validated_query_on_the_projects_connection():

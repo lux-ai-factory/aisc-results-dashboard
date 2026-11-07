@@ -54,21 +54,33 @@ def _quoted(value) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def quoted_name(name) -> str:
+    """A result column the model named, as one SQL identifier: whatever text its alias holds stays a column name
+    (never SQL the assistant's query check did not see), with its capitals and spaces kept."""
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def distinct_sql(category, sql: str) -> str:
+    """The query of a radar's axes: the category's values in the validated query's result."""
+    return f"SELECT DISTINCT {quoted_name(category)} FROM ({sql}) AS v ORDER BY 1"
+
+
 def chart_params(chart: dict, *, axes) -> dict:
     """Superset's settings for a proposed chart. A radar needs its axes (the category values of the real result)."""
     category, value, series = chart["category"], chart["value"], chart.get("series")
     groupby = [series] if series else []
     kind = chart["kind"]
     if kind == "radar":
+        when, then = quoted_name(category), quoted_name(value)
         metrics = [{"expressionType": "SQL", "label": str(a),
-                    "sqlExpression": f"MAX(CASE WHEN {category} = {_quoted(a)} THEN {value} END)"} for a in axes]
+                    "sqlExpression": f"MAX(CASE WHEN {when} = {_quoted(a)} THEN {then} END)"} for a in axes]
         return {"viz_type": "radar", "groupby": groupby, "metrics": metrics, "adhoc_filters": [], "row_limit": 1000,
                 "show_legend": True, "legendOrientation": "bottom", "number_format": "SMART_NUMBER",
                 "column_config": {}}
     if kind in ("bar", "line"):
         return {"viz_type": "echarts_timeseries_bar" if kind == "bar" else "echarts_timeseries_line",
                 "x_axis": category, "groupby": groupby, "adhoc_filters": [], "row_limit": 1000,
-                "metrics": [{"expressionType": "SQL", "label": value, "sqlExpression": f"MAX({value})"}],
+                "metrics": [{"expressionType": "SQL", "label": value, "sqlExpression": f"MAX({quoted_name(value)})"}],
                 "show_legend": True, "legendOrientation": "bottom", "xAxisLabelRotation": 45}
     return {"viz_type": "table", "query_mode": "raw", "all_columns": [c for c in (category, series, value) if c],
             "adhoc_filters": [], "row_limit": 1000, "server_pagination": False}
