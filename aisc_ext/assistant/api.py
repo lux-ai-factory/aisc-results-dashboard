@@ -14,7 +14,7 @@ from flask import g, request, session
 from flask_appbuilder.api import BaseApi, expose, protect, safe
 
 from aisc_ext import access, ledger
-from aisc_ext.assistant.service import (chart_uuid_of, description_from, distinct_sql, may_validate,
+from aisc_ext.assistant.service import (chart_uuid_of, description_from, distinct_sql,
                                         plots_for_model, ranges_from, to_change, to_remove, validated_files,
                                         with_conversation)
 from aisc_ext.charts import changed_params, place_chart, plots_on, without_chart
@@ -178,11 +178,13 @@ class AssistantApi(BaseApi):
     openapi_spec_tag = "AISC Chart assistant"
     csrf_exempt = False
 
-    def _project(self, dashboard_id):
+    def _project(self, dashboard_id, act):
+        """(dashboard, pid, None) when the person may open the dashboard and `act` on it (access.may), checked before
+        the chart assistant is called; else (None, None, the refusal)."""
         dashboard, status = open_dashboard(dashboard_id)
         if status:
             return None, None, (self.response_404() if status == 404 else self.response_403())
-        pid = access.project_for(dashboard, g.user)
+        pid = access.project_if(g.user, dashboard, act)
         if pid is None:
             return None, None, self.response_403()
         # the witness hint (?dashboard=<slug>) files the request under the slug's project: it must be this dashboard
@@ -203,7 +205,7 @@ class AssistantApi(BaseApi):
           responses:
             201: {description: started}
         """
-        dashboard, pid, refused = self._project((request.json or {}).get("dashboard_id"))
+        dashboard, pid, refused = self._project((request.json or {}).get("dashboard_id"), "read")
         if refused:
             return refused
         source, database = _database(pid)
@@ -235,11 +237,11 @@ class AssistantApi(BaseApi):
         dashboard_id = self._mine(cid)
         if dashboard_id is None:
             return self.response_404()
-        dashboard, pid, refused = self._project(dashboard_id)
+        dashboard, pid, refused = self._project(dashboard_id, "read")
         if refused:
             return refused
         # anyone who may open the dashboard asks; whether this person may change or remove is decided before the call
-        editor = may_validate({r.name for r in g.user.roles}, pid)
+        editor = access.may(g.user, dashboard, "change_chart")
         made = _plots_on(dashboard)
         status, data = _assistant(f"/v1/conversations/{cid}/messages",
                                   {"text": (request.json or {}).get("text", ""), "charts": made})
@@ -302,11 +304,9 @@ class AssistantApi(BaseApi):
         dashboard_id = self._mine(cid)
         if dashboard_id is None:
             return self.response_404()
-        dashboard, pid, refused = self._project(dashboard_id)
+        dashboard, pid, refused = self._project(dashboard_id, "change_chart")
         if refused:
             return refused
-        if not may_validate({r.name for r in g.user.roles}, pid):
-            return self.response_403()
         status, chosen = _assistant(f"/v1/conversations/{cid}/validate",
                                     {key: (request.json or {})[key] for key in ("fingerprint", "proposal")
                                      if key in (request.json or {})})

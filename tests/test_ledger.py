@@ -405,7 +405,7 @@ def _route(path, cls, fn):
                                          ("aisc_ext/reviews/api.py", "ReviewRequestApi", "patch")])
 def test_every_write_takes_its_project_from_the_binding(path, cls, fn):
     text = _route(path, cls, fn)
-    assert "access.project_for(" in text and "ledger.project_of(" not in text
+    assert 'access.project_if(g.user, dashboard, "comment")' in text and "ledger.project_of(" not in text
 
 
 def test_a_pass_on_postgres_ends_cleanly_on_the_images_sqlalchemy(monkeypatch):

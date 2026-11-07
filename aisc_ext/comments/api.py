@@ -175,7 +175,7 @@ class CommentApi(BaseApi):
         db.session.add(row)
         db.session.flush()                                              # gives the row its id, for the event
         # the ledger event goes in the comment's own transaction: both commit, or neither
-        ledger.emit(db.session.connection(), access.project_for(dashboard, g.user), "dashboard.comment.created",
+        ledger.emit(db.session.connection(), access.project_if(g.user, dashboard, "comment"), "dashboard.comment.created",
                     ledger.comment_created(row.to_dict(), slug=dashboard.slug,
                                               request=ledger.request_id(request.headers, request.environ)))
         db.session.commit()
@@ -205,7 +205,7 @@ class CommentApi(BaseApi):
         if not hide_once(db.session, AiscComment, pk, datetime.now(timezone.utc)):   # hidden, not removed
             db.session.rollback()
             return self.response_404()
-        ledger.emit(db.session.connection(), access.project_for(dashboard, g.user), "dashboard.comment.deleted",
+        ledger.emit(db.session.connection(), access.project_if(g.user, dashboard, "comment"), "dashboard.comment.deleted",
                     ledger.comment_deleted(row.to_dict(), slug=dashboard.slug,
                                               request=ledger.request_id(request.headers, request.environ)))
         db.session.commit()

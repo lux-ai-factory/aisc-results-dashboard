@@ -15,7 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 
 from aisc_ext import security
-from aisc_ext.projects import editor_role_name, project_role_name
+from aisc_ext.projects import project_role_name
 
 REPO = Path(__file__).resolve().parents[1]
 A = str(uuid.UUID(int=0xA))
@@ -50,17 +50,6 @@ def test_bad_metadata_is_no_tile():
         assert security.plugin_tiles([d], bridge_user_id=BRIDGE_ID) == []
 
 
-def test_importing_into_a_tile_takes_being_its_projects_editor():
-    """Owning the dashboard is not enough: an editor of A who owns B's tile (or any dashboard naming B) may not
-    import into it. An Admin may."""
-    mine_a = [project_role_name(A), editor_role_name(A)]
-    assert security.may_import_into(A, user_roles=mine_a, is_admin=False, owns=True)
-    assert not security.may_import_into(B, user_roles=mine_a, is_admin=False, owns=True)
-    assert not security.may_import_into(A, user_roles=mine_a, is_admin=False, owns=False)
-    assert not security.may_import_into(A, user_roles=[project_role_name(A)], is_admin=False, owns=True)
-    assert security.may_import_into(B, user_roles=[], is_admin=True, owns=False)
-
-
 def _source(path, cls, fn):
     import ast
 
@@ -72,7 +61,7 @@ def _source(path, cls, fn):
 
 def test_the_import_page_and_the_ownership_sync_use_the_binding():
     assert "security.plugin_tiles(" in _source("aisc_ext/import_view.py", None, "_plugin_tiles")
-    assert "may_import_into(" in _source("aisc_ext/import_view.py", "AiscChartImportView", "_mine")
+    assert 'access.may(g.user, d, "import")' in _source("aisc_ext/import_view.py", "AiscChartImportView", "_mine")
     sync = _source("aisc_ext/sso.py", "KeycloakSecurityManager", "_sync_dashboard_ownership")
     assert "plugin_tiles(" in sync and "json_metadata" not in sync
 

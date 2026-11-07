@@ -78,15 +78,6 @@ def _number(value):
     return int(value) if float(value).is_integer() else float(value)
 
 
-def may_validate(roles, pid) -> bool:
-    """Validating, changing or removing a plot is an editor's or an admin's act: an Admin, or a person holding the
-    project's editor role (projects.editor_role_name). No project (None): an Admin only."""
-    from aisc_ext.projects import editor_role_name
-
-    roles = set(roles or [])
-    return "Admin" in roles or (pid is not None and editor_role_name(pid) in roles)
-
-
 def distinct_sql(category, sql: str) -> str:
     """The query of a radar's axes: the category's values in the validated query's result."""
     return f"SELECT DISTINCT {quoted_name(category)} FROM ({sql}) AS v ORDER BY 1"

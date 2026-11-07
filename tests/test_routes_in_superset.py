@@ -1,7 +1,7 @@
 """The routes' wiring, run in a real Superset.
 
-The decision logic of the fixes (a request resolved once, `access.project_for`, `ledger.request_id`,
-`security.plugin_tiles` / `may_import_into`, the requester's own resolution, bad input) is tested by
+The decision logic of the fixes (a request resolved once, `access.may` / `access.project_if`, `ledger.request_id`,
+`security.plugin_tiles`, the requester's own resolution, bad input) is tested by
 behaviour in test_reviews.py, test_ledger.py and test_tile_binding.py; there, that the routes call it was
 proven only by reading their source. Here the routes run: a Superset app on a throwaway SQLite metadata database, the extension installed
 by superset_config.py's FLASK_APP_MUTATOR as in the stack, a person signed in through the Flask test client.

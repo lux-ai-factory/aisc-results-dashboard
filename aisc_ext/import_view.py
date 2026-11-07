@@ -41,14 +41,10 @@ class AiscChartImportView(BaseView):
 
     def _mine(self):
         """The tiles this person may import into: the ones they own, of a project they are an editor of now;
-        every one for an admin (security.may_import_into)."""
-        from aisc_ext.security import may_import_into
+        every one for an admin (access.may, "import")."""
+        from aisc_ext import access
 
-        admin = any(r.name == "Admin" for r in g.user.roles)
-        roles = [r.name for r in g.user.roles]
-        return [(d, pid) for d, pid in _plugin_tiles()
-                if may_import_into(pid, user_roles=roles, is_admin=admin,
-                                   owns=any(o.id == g.user.id for o in d.owners))]
+        return [(d, pid) for d, pid in _plugin_tiles() if access.may(g.user, d, "import")]
 
     def _page(self, error=None, status=200):
         tiles = sorted(({"id": d.id, "title": d.dashboard_title} for d, _ in self._mine()),

@@ -4,7 +4,7 @@ import hashlib
 
 import pytest
 
-from aisc_ext.assistant.service import (MAX_LABELS, chart_params, description_from, distinct_sql, may_validate,
+from aisc_ext.assistant.service import (MAX_LABELS, chart_params, description_from, distinct_sql,
                                         to_remove, validated_files)
 from aisc_ext.charts import kind_of
 
@@ -31,21 +31,6 @@ def test_long_values_are_free_text_and_never_listed():
 def test_no_count_reaches_the_description():
     d = description_from([], [("M", "k", ["a"], 1, False, 1.0)])
     assert "rows" not in d["metrics"][0] and str(MAX_LABELS) not in str(d)
-
-
-PROJECT = "0b5446b0-3bcf-4747-9a47-996747111b86"
-
-
-@pytest.mark.parametrize("roles,ok", [(["Admin"], True), ([f"AiscProjectEditor_{PROJECT.replace('-', '')}"], True),
-                                      ([f"AiscProject_{PROJECT.replace('-', '')}", "AiscViewer"], False),
-                                      (["AiscProjectEditor_other"], False)])
-def test_only_an_editor_of_the_project_or_an_admin_validates(roles, ok):
-    """The project is named by its id, and its editor role by projects.editor_role_name, the one rule of that name."""
-    assert may_validate(roles, PROJECT) is ok
-
-
-def test_no_project_means_only_an_admin_validates():
-    assert may_validate(["Admin"], None) is True and may_validate(["AiscProjectEditor_x"], None) is False
 
 
 def test_a_radar_has_one_axis_per_category_and_one_polygon_per_series():

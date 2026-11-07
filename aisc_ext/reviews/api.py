@@ -97,7 +97,7 @@ class ReviewRequestApi(BaseApi):
         row = AiscReviewRequest(**{k: v for k, v in data.items() if k != "created_at"})
         db.session.add(row)
         db.session.flush()                                              # gives the row its id, for the event
-        ledger.emit(db.session.connection(), access.project_for(dashboard, g.user), "dashboard.review.requested",
+        ledger.emit(db.session.connection(), access.project_if(g.user, dashboard, "comment"), "dashboard.review.requested",
                     ledger.review_requested(row.to_dict(), slug=slug,
                                             request=ledger.request_id(request.headers, request.environ)))
         db.session.commit()
@@ -136,7 +136,7 @@ class ReviewRequestApi(BaseApi):
         row.status = status_after
         row.resolved_at = datetime.now(timezone.utc)
         row.resolved_by = name
-        ledger.emit(db.session.connection(), access.project_for(dashboard, g.user), "dashboard.review.resolved",
+        ledger.emit(db.session.connection(), access.project_if(g.user, dashboard, "comment"), "dashboard.review.resolved",
                     ledger.review_resolved(row.to_dict(), status_before=status_before, slug=slug,
                                               request=ledger.request_id(request.headers, request.environ)))
         db.session.commit()

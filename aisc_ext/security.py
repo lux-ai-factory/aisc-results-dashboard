@@ -195,17 +195,6 @@ def plugin_tiles(dashboards, *, bridge_user_id) -> list[tuple[object, str]]:
     return out
 
 
-def may_import_into(pid: str, *, user_roles, is_admin: bool, owns: bool) -> bool:
-    """Whether a person may import charts into project `pid`'s tile: an Admin, or an owner of the tile who is
-    an editor of that project now (its editor role, from this sign-in's memberships). Owning a dashboard
-    alone is not enough."""
-    from aisc_ext.projects import editor_role_name
-
-    if is_admin:
-        return True
-    return bool(owns) and editor_role_name(pid) in set(user_roles or [])
-
-
 def own_roles_only(query, user=None):
     """EXTRA_RELATED_QUERY_FILTERS["role"]: the roles /api/v1/<resource>/related/roles lists, which are
     every role by default, so every project's pid (AiscProject_<hex>) was readable by anyone. A person
