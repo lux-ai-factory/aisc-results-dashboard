@@ -149,3 +149,13 @@ def test_validate_names_the_proposal_clicked_not_only_its_query():
 def test_a_plot_changed_in_place_is_said_and_the_dashboard_reloads():
     text = ASSISTANT.read_text()
     assert "d.changed" in text and "Changed" in text
+
+
+def test_every_write_of_the_button_and_the_panel_names_the_dashboards_slug_for_the_ledger():
+    """The gateway's witness files a dashboard write under the project its slug names, read from ?dashboard= (as
+    the Review page sends it); without it the relay rejects the event. The page's address may hold the dashboard's
+    number, so the slug is read from Superset."""
+    for script in (BUTTON, ASSISTANT):
+        text = script.read_text()
+        assert "'?dashboard=' + encodeURIComponent(" in text, script.name
+        assert "result.slug" in text, script.name

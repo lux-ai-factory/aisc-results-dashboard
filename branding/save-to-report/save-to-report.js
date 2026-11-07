@@ -163,11 +163,30 @@
       .then(function (r) { return r.json(); }).then(function (d) { return d.result; });
   }
 
+  /* The dashboard's slug, which every write names (?dashboard=): the gateway's witness reads the project from it, so the
+     write's ledger event is filed in that project's log. The address may hold the dashboard's number instead. */
+  var slugOnce = null;
+  function slug() {
+    if (!slugOnce) {
+      slugOnce = fetch('/api/v1/dashboard/' + encodeURIComponent(dashboard), { credentials: 'same-origin' })
+        .then(function (r) { return r.ok ? r.json() : {}; })
+        .then(function (d) { return (d.result && d.result.slug) || ''; })
+        .catch(function () { return ''; });
+    }
+    return slugOnce;
+  }
+
+  function witnessed(url) {
+    return slug().then(function (s) { return s ? url + '?dashboard=' + encodeURIComponent(s) : url; });
+  }
+
   function send(token, body) {
-    return fetch('/api/v1/aisc_report_export/', {
-      method: 'POST', credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token },
-      body: JSON.stringify(body),
+    return witnessed('/api/v1/aisc_report_export/').then(function (url) {
+      return fetch(url, {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token },
+        body: JSON.stringify(body),
+      });
     }).then(function (r) {
       if (r.ok) return r;
       return r.json().catch(function () { return {}; }).then(function (d) {

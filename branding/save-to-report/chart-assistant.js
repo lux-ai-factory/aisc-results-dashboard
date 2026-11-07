@@ -37,13 +37,32 @@
     });
   }
 
+  /* The dashboard's slug, which every write names (?dashboard=): the gateway's witness reads the project from it, so the
+     write's ledger event is filed in that project's log. The address may hold the dashboard's number instead. */
+  var slugOnce = null;
+  function slug() {
+    if (!slugOnce) {
+      slugOnce = fetch('/api/v1/dashboard/' + encodeURIComponent(dashboard), { credentials: 'same-origin' })
+        .then(function (r) { return r.ok ? r.json() : {}; })
+        .then(function (d) { return (d.result && d.result.slug) || ''; })
+        .catch(function () { return ''; });
+    }
+    return slugOnce;
+  }
+
+  function witnessed(url) {
+    return slug().then(function (s) { return s ? url + '?dashboard=' + encodeURIComponent(s) : url; });
+  }
+
   function post(path, body) {
-    return fetch('/api/v1/security/csrf_token/', { credentials: 'same-origin' })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        return fetch('/api/v1/aisc_assistant/conversations' + path, {
+    return Promise.all([
+      fetch('/api/v1/security/csrf_token/', { credentials: 'same-origin' }).then(function (r) { return r.json(); }),
+      witnessed('/api/v1/aisc_assistant/conversations' + path),
+    ])
+      .then(function (got) {
+        return fetch(got[1], {
           method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': d.result },
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': got[0].result },
           body: JSON.stringify(body),
         });
       })

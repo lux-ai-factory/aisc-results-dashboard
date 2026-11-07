@@ -183,6 +183,9 @@ class AssistantApi(BaseApi):
         pid = ledger.project_for(dashboard, g.user)
         if pid is None:
             return None, None, self.response_403()
+        # the witness hint (?dashboard=<slug>) files the request under the slug's project: it must be this dashboard
+        if (problem := ledger.hint_problem(request.args.get("dashboard"), dashboard.slug)) is not None:
+            return None, None, self.response_400(message=problem)
         return dashboard, pid, None
 
     def _mine(self, cid):

@@ -358,6 +358,12 @@ def test_an_editors_save_writes_one_row_and_one_event_of_the_project(seen):
         (seen["A"], "dashboard.export.saved")]
 
 
+@pytest.mark.parametrize("name", ["export.other_hint", "assistant.start.other_hint", "assistant.change.other_hint"])
+def test_a_write_whose_dashboard_hint_names_another_dashboard_is_refused(seen, name):
+    assert seen[name]["status"] == 400, seen[name]["text"][:500]
+    assert seen[name]["events"] == [] and seen[name].get("rows", 0) == 0
+
+
 def test_a_viewer_may_talk_to_the_assistant(seen):
     assert seen["assistant.start.viewer"]["status"] == 201, seen["assistant.start.viewer"]["text"][:500]
 

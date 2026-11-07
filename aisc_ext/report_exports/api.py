@@ -37,6 +37,9 @@ class ReportExportApi(BaseApi):
             return self.response_404()
         if status == 403:
             return self.response_403()
+        # the witness hint (?dashboard=<slug>) files the request under the slug's project: it must be this dashboard
+        if (problem := ledger.hint_problem(request.args.get("dashboard"), dashboard.slug)) is not None:
+            return self.response_400(message=problem)
         try:
             plot = read_plot(body)
         except ValueError as exc:
