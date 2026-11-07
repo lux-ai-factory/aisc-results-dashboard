@@ -182,6 +182,8 @@ _EXTENSION_GRANTS = {
     # the top menu's "← Back", one level up to the project's AI Assessment Sandbox (aisc_ext/back.py)
     "Back": ("menu_access",),
     "ReviewRequestApi": ("can_list", "can_post", "can_patch"),
+    "ReportExportApi": ("can_post",),
+    "AssistantApi": ("can_start", "can_message", "can_validate"),
 }
 
 
@@ -248,7 +250,12 @@ def _install_extension(app):
     try:
         # REST APIs for the Review page, the embedding host and the platform's
         # bridge (which creates and removes a project's dashboard).
-        for api in (CommentApi, ProjectBridgeApi, ReviewRequestApi):
+        from aisc_ext.report_exports.api import ReportExportApi
+        from aisc_ext.report_exports.model import AiscReportPlot
+
+        from aisc_ext.assistant.api import AssistantApi
+
+        for api in (CommentApi, ProjectBridgeApi, ReviewRequestApi, ReportExportApi, AssistantApi):
             appbuilder.add_api(api)
         # The Review page comes first in the menu: it is where people read and
         # write comments.
@@ -263,7 +270,10 @@ def _install_extension(app):
             (AiscChartImportView, "Import charts", "fa-file-import"),
         ):
             appbuilder.add_view(view, name, category="Assessment", icon=icon)
-        for model in (AiscComment, AiscReviewRequest):
+        from aisc_ext.made_tiles import AiscChangedChart, AiscMadeTile, AiscRemovedChart
+
+        for model in (AiscComment, AiscReviewRequest, AiscMadeTile, AiscRemovedChart, AiscChangedChart,
+                      AiscReportPlot):
             model.__table__.create(bind=db.engine, checkfirst=True)
         # A deleted comment is hidden, not removed, via aisc_comment.deleted_at.
         # Tables created before that column existed get it here. The ledger

@@ -64,6 +64,9 @@ class FakeStore:
     def items(self, kind):
         return dict(self.objects[kind])
 
+    def forget_tiles(self, pid):
+        self.forgotten_tiles = getattr(self, 'forgotten_tiles', []) + [pid]
+
     def project_lock(self, pid):
         import contextlib
 
@@ -495,3 +498,10 @@ def test_the_store_reads_charts_through_it():
     cls = next(n for n in ast.parse(src).body if isinstance(n, ast.ClassDef) and n.name == "SupersetStore")
     text = ast.get_source_segment(src, next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == "_items_chart"))
     assert "charts_of(" in text
+
+
+def test_removing_a_project_forgets_which_tiles_it_had(projects):
+    store = FakeStore()
+    _register(projects, store)
+    projects.unregister_project(PID, store=store)
+    assert store.forgotten_tiles == [PID]

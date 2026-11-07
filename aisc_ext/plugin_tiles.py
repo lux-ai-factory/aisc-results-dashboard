@@ -89,7 +89,8 @@ def user_part(position: dict | None, linked: list[dict]) -> dict:
 
     def keep(node_id):
         node = position.get(node_id)
-        if not isinstance(node, dict) or node_id.startswith(_AISC_NODES):
+        # the chart assistant's plots are people's charts made through it: kept like theirs
+        if not isinstance(node, dict) or (node_id.startswith(_AISC_NODES) and "-aisc-assistant" not in node_id):
             return
         out[node_id] = copy.deepcopy(node)
         for child in node.get("children", []):
@@ -128,7 +129,8 @@ def opening(latest_runs: list[dict]) -> tuple[int | None, list[str]]:
 def sync_plugin(pid, project_name: str, plugin: str, label: str, version: str, visualizations: list[dict], *,
                 store, importer) -> dict:
     """Make or update the plugin's dashboard in the project. Idempotent: a second sync with the same input
-    changes nothing. Returns {"slug", "charts"} (the number of default charts).
+    changes nothing. Returns {"slug", "charts"} (the number of default charts); a tile someone deleted is not made
+    again, and its slug is None.
 
     Holds the project's lock throughout: two syncs at once would both make a new dashboard. The
     results dataset is first brought up to date when older code registered it, so the tile never waits on
@@ -152,25 +154,31 @@ def _sync(pid, project_name, plugin, label, version, visualizations, *, store, i
     slug = charts.plugin_slug(pid, plugin)
     default_version, default_runs = opening(store.latest_runs(pid, label))
 
+    state = store.dashboard_state(slug)
+    if state is None and (older := charts.older_plugin_slug(pid, plugin)) != slug:
+        state = store.dashboard_state(older)      # the import finds it by uuid and gives it the new slug
+    if state is None and store.tile_was_made(slug):
+        return {"slug": None, "charts": 0}        # someone deleted it: it stays deleted
+
     starter_id = None
     if default_runs or visualizations:
         importer.import_charts(charts.starter_bundle(**common))
         starter_id = store.chart_id(charts.starter_uuid(pid, plugin))
-
-    state = store.dashboard_state(slug)
-    if state is None and (older := charts.older_plugin_slug(pid, plugin)) != slug:
-        state = store.dashboard_state(older)      # the import finds it by uuid and gives it the new slug
     kept = user_part(state["position"], state["charts"]) if state else {}
     previous_defaults = {c["uuid"] for c in state["charts"] if c["aisc"]} if state else set()
+    removed = store.removed_charts(slug)          # defaults someone removed with the chart assistant stay removed
 
     files = charts.bundle(project_name=project_name or pid, version=version, visualizations=visualizations,
                           starter_chart_id=starter_id, user_part=kept,
-                          default_version=default_version, default_runs=default_runs, values=values, **common)
+                          default_version=default_version, default_runs=default_runs, values=values,
+                          skip=removed, changed=store.changed_charts(slug), **common)
     importer.import_dashboard(files)
 
-    defaults = [charts.chart_uuid(pid, plugin, i, v.get("title") or "") for i, v in enumerate(visualizations)]
+    defaults = [u for u in (charts.chart_uuid(pid, plugin, i, v.get("title") or "") for i, v in enumerate(visualizations))
+                if u not in removed]
     people = [n["meta"]["uuid"] for n in kept.values() if n.get("type") == "CHART"]
     store.link_charts(slug, defaults + people)
-    store.delete_charts(sorted(previous_defaults - set(defaults)))
+    store.delete_charts(sorted(previous_defaults - set(defaults) - removed))
     store.set_dashboard_roles(slug, [project_role_name(pid)])
+    store.remember_tile(slug)
     return {"slug": slug, "charts": len(defaults)}

@@ -55,6 +55,9 @@ class Superset:
         # the values of each dimension in the plugin's results (store.dimension_values): a radar's axes
         self.values = {"feature": ["age", "income"]}
         self.events = []            # "lock", "unlock" and each import, in order
+        self.made_tiles = set()     # the slugs of the tiles made (store.tile_was_made, store.remember_tile)
+        self.removed = {}           # slug -> uuids of default charts someone removed (store.removed_charts)
+        self.changed = {}           # slug -> {uuid: the assistant's changes} (store.changed_charts)
 
     # -- what the tile code reads and writes --
     def source(self, pid):
@@ -91,6 +94,18 @@ class Superset:
     def dimension_values(self, pid, label, dimensions):
         self.asked_values = list(dimensions)
         return {d: list(self.values.get(d, [])) for d in dimensions}
+
+    def tile_was_made(self, slug):
+        return slug in self.made_tiles
+
+    def remember_tile(self, slug):
+        self.made_tiles.add(slug)
+
+    def removed_charts(self, slug):
+        return set(self.removed.get(slug, set()))
+
+    def changed_charts(self, slug):
+        return dict(self.changed.get(slug, {}))
 
     def chart_id(self, chart_uuid):
         c = self.charts.get(chart_uuid)
@@ -514,3 +529,92 @@ def test_a_second_sync_keeps_the_radar_and_adds_none(tiles):
     before = sorted(s.charts)
     tiles.sync_plugin(PID, "Mcas", PLUGIN, "Data Drift", "1.0.0", V1, store=s, importer=s)
     assert sorted(s.charts) == before
+
+
+# A tile someone deleted stays deleted.
+
+def test_a_deleted_tile_is_not_made_again(tiles, charts):
+    s = Superset()
+    sync(tiles, s)
+    del s.dashboards[charts.plugin_slug(PID, PLUGIN)]
+    s.imports.clear()
+    assert sync(tiles, s) == {"slug": None, "charts": 0}
+    assert s.imports == [] and charts.plugin_slug(PID, PLUGIN) not in s.dashboards
+
+
+def test_a_tile_never_made_is_made(tiles, charts):
+    s = Superset()
+    assert sync(tiles, s)["slug"] == charts.plugin_slug(PID, PLUGIN)
+
+
+def test_a_tile_made_before_this_was_remembered_counts_once_it_is_seen(tiles, charts):
+    s = Superset()
+    sync(tiles, s)
+    s.made_tiles.clear()                               # as the tiles that exist on the day this is deployed
+    sync(tiles, s)
+    del s.dashboards[charts.plugin_slug(PID, PLUGIN)]
+    assert sync(tiles, s)["slug"] is None
+
+
+def test_a_renamed_tile_is_remembered_under_its_new_name(tiles, charts):
+    s = Superset()
+    sync(tiles, s)
+    assert charts.plugin_slug(PID, PLUGIN) in s.made_tiles
+
+
+# ── Plots removed with the chart assistant, and the assistant's own plots ────
+
+def _take_off(s, slug, chart_uuid):
+    """What the chart assistant does on "delete it": the chart leaves the layout and the dashboard, stays in Superset,
+    and the dashboard remembers it was removed."""
+    from aisc_ext.assistant.service import without_chart
+    d = s.dashboards[slug]
+    d["position"] = without_chart(d["position"], s.charts[chart_uuid]["id"], any_chart=True)
+    d["slices"].discard(s.charts[chart_uuid]["id"])
+    s.removed.setdefault(slug, set()).add(chart_uuid)
+
+
+def test_a_default_chart_removed_with_the_assistant_is_not_put_back_by_a_sync(tiles, charts):
+    s = Superset()
+    slug = charts.plugin_slug(PID, PLUGIN)
+    sync(tiles, s)
+    psi = charts.chart_uuid(PID, PLUGIN, 1, "PSI per feature")
+    drift = charts.chart_uuid(PID, PLUGIN, 0, "Drift Score")
+    _take_off(s, slug, psi)
+    out = sync(tiles, s)
+    placed, linked = on_dashboard(s, slug)
+    assert psi not in placed and psi not in linked
+    assert psi in s.charts                                  # kept in Superset: it can be put back
+    assert drift in placed and drift in linked
+    assert out["charts"] == 2
+
+
+def test_the_assistants_plots_stay_on_a_plugin_dashboard_through_a_sync(tiles, charts):
+    from aisc_ext.assistant.service import place_chart
+    s = Superset()
+    slug = charts.plugin_slug(PID, PLUGIN)
+    sync(tiles, s)
+    made = s.add_user_chart(slug, name="Drift by feature (assistant)")
+    d = s.dashboards[slug]
+    node = next(k for k, n in d["position"].items() if isinstance(n, dict) and n.get("meta", {}).get("uuid") == made)
+    d["position"]["GRID_ID"]["children"].remove(node)
+    del d["position"][node]
+    d["position"] = place_chart(d["position"], chart_id=s.charts[made]["id"], chart_uuid=made, name="Drift by feature")
+    sync(tiles, s, V2, "0.4.2")
+    placed, linked = on_dashboard(s, slug)
+    assert made in placed and made in linked
+    pos = s.dashboards[slug]["position"]
+    assert "HEADER-aisc-assistant" in pos and pos["HEADER-aisc-assistant"]["meta"]["text"] == "Assistant charts"
+
+
+def test_a_default_chart_changed_with_the_assistant_keeps_its_change_through_a_sync(tiles, charts):
+    s = Superset()
+    slug = charts.plugin_slug(PID, PLUGIN)
+    sync(tiles, s)
+    psi = charts.chart_uuid(PID, PLUGIN, 1, "PSI per feature")
+    s.changed[slug] = {psi: {"axis_max": 0.4, "title": "PSI per feature, up to 40%"}}
+    sync(tiles, s, V1, "0.4.2")
+    assert s.charts[psi]["name"] == "PSI per feature, up to 40%"
+    assert s.charts[psi]["params"]["y_axis_bounds"] == [None, 0.4]
+    drift = charts.chart_uuid(PID, PLUGIN, 0, "Drift Score")
+    assert "y_axis_bounds" not in s.charts[drift]["params"]

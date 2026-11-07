@@ -416,3 +416,23 @@ def test_before_any_run_no_version_is_chosen(charts):
                                if k.startswith("dashboards/")))
     version = next(f for f in dash["metadata"]["native_filter_configuration"] if f["name"] == "Version")
     assert version["defaultDataMask"]["filterState"] == {}
+
+
+def test_every_filter_offers_only_the_values_of_its_plugins_own_results(charts):
+    """The results dataset holds every plugin's rows: each filter of a plugin's tile is pre-filtered to its tool, so a
+    run, target or version of another test is never offered."""
+    filters = charts.native_filters("ds-uuid", 1, ["Run 37"], tool="StrongREJECT (Mijke)")
+    for f in filters:
+        assert f["adhoc_filters"] == [{"expressionType": "SIMPLE", "subject": "tool", "operator": "==",
+                                       "comparator": "StrongREJECT (Mijke)", "clause": "WHERE"}], f["name"]
+
+
+def test_the_tile_names_its_tool_in_its_filters(charts):
+    files = charts.bundle(pid="p", project_name="P", plugin="pkg::Plugin", label="StrongREJECT (Mijke)", version="1",
+                          visualizations=[], dataset_uuid="ds", dataset_name="engine_results_x", database_uuid="db",
+                          database_name="db", sqlalchemy_uri="postgresql://x", columns=["tool", "run"],
+                          starter_chart_id=None)
+    import yaml
+    dashboard = yaml.safe_load(next(v for k, v in files.items() if k.startswith("dashboards/")))
+    assert all(f["adhoc_filters"][0]["comparator"] == "StrongREJECT (Mijke)"
+               for f in dashboard["metadata"]["native_filter_configuration"])

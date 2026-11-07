@@ -1,0 +1,4 @@
+{# Superset's hook for code added by a deployment: Save to report and the chart assistant (branding/save-to-report).
+   Each script is named with its version, since Superset tells browsers to keep static files for a year. #}
+<script src="{{ assets_prefix | default('') }}/static/assets/branding/save-to-report/save-to-report.js?v=f0c29e92aba9" nonce="{{ csp_nonce() if csp_nonce is defined else '' }}"></script>
+<script src="{{ assets_prefix | default('') }}/static/assets/branding/save-to-report/chart-assistant.js?v=f1051f47340b" nonce="{{ csp_nonce() if csp_nonce is defined else '' }}"></script>

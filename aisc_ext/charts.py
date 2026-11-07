@@ -314,8 +314,10 @@ VERSION_FILTER = "NATIVE_FILTER-version"
 NOT_LOCAL = "no"
 
 
-def native_filters(dataset_uuid: str, default_version: int | None = None, default_runs=()) -> list[dict]:
-    """Version, Run (several to compare), Target and Local, on every plugin dashboard.
+def native_filters(dataset_uuid: str, default_version: int | None = None, default_runs=(),
+                   tool: str | None = None) -> list[dict]:
+    """Version, Run (several to compare), Target and Local, on every plugin dashboard, each offering only the values
+    of the plugin's own results (tool) when it is named.
 
     A tile opens on one AI card version: the Version filter's default is the one the sync chose (the latest),
     and a link that names a version sets it instead. The Run filter's default is the latest run of every
@@ -333,6 +335,9 @@ def native_filters(dataset_uuid: str, default_version: int | None = None, defaul
                                "searchAllOptions": False, "defaultToFirstItem": False, **control},
              "defaultDataMask": {"filterState": {}, "extraFormData": {}, "ownState": {}},
              "cascadeParentIds": [], "scope": {"rootPath": ["ROOT_ID"], "excluded": []}}
+        if tool:
+            # the dataset holds every plugin's rows: the filter offers only this plugin's values
+            f["adhoc_filters"] = [_filter("tool", "==", tool)]
         if default:
             f["defaultDataMask"] = {"filterState": {"value": list(default)},
                                     "extraFormData": {"filters": [{"col": column, "op": "IN", "val": list(default)}]},
@@ -349,7 +354,7 @@ def native_filters(dataset_uuid: str, default_version: int | None = None, defaul
 
 def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset_uuid, dataset_name,
            database_uuid, database_name, sqlalchemy_uri, columns, starter_chart_id, user_part=None,
-           default_version=None, default_runs=(), values=None) -> dict:
+           default_version=None, default_runs=(), values=None, skip=frozenset(), changed=None) -> dict:
     """The export bundle of one plugin's dashboard in one project: {path in the ZIP: YAML text}. The tile opens
     on default_version and default_runs (native_filters); no default run means the plugin has not run yet."""
     files = {"metadata.yaml": _dump({"version": _VERSION, "type": "Dashboard", "timestamp": _TIMESTAMP})}
@@ -359,8 +364,14 @@ def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset
     for index, v in enumerate(visualizations):
         viz_type, params, description = chart_settings(v, plugin_label=label, columns=columns, values=values)
         cid = chart_uuid(pid, plugin, index, v.get("title") or "")
+        if cid in skip:                 # removed by someone: neither written nor placed (its index is kept)
+            continue
         params.update({"aisc_project": pid, "aisc_plugin": plugin, "aisc_chart_id": cid})
         name = default_title(v)
+        if (changes := (changed or {}).get(cid)):      # changed by someone with the chart assistant: kept
+            from aisc_ext.assistant.service import changed_params
+            viz_type, params = changed_params(viz_type, params, {k: v for k, v in changes.items() if k != "title"})
+            name = changes.get("title") or name
         files[f"charts/{cid}.yaml"] = _chart_file(chart_id=cid, name=name, viz_type=viz_type, params=params,
                                                   description=description, dataset_uuid=dataset_uuid)
         placed.append((cid, name, viz_type))
@@ -372,7 +383,8 @@ def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset
                            starter_chart_id=starter_chart_id if placed or default_runs else None,
                            user_part=user_part,
                            has_run=bool(default_runs)),
-        "metadata": {"native_filter_configuration": native_filters(dataset_uuid, default_version, default_runs),
+        "metadata": {"native_filter_configuration": native_filters(dataset_uuid, default_version, default_runs,
+                                                                   tool=label),
                      "color_scheme": "",
                      "aisc_project": pid, "aisc_plugin": plugin, "aisc_version": version,
                      "aisc_charts": [cid for cid, _, _ in placed]}})

@@ -116,7 +116,8 @@ def request_id(headers, environ=None) -> str | None:
 
 #: The actions this module builds fields for; `event` refuses any other.
 ACTIONS = ("dashboard.comment.created", "dashboard.comment.deleted", "dashboard.review.requested",
-           "dashboard.review.resolved")
+           "dashboard.review.resolved", "dashboard.export.saved", "dashboard.assistant.validated",
+           "dashboard.assistant.removed", "dashboard.assistant.changed")
 
 
 def _fields(item_type, item_id, request, **fields) -> dict:
@@ -140,6 +141,36 @@ def comment_created(row: dict, *, slug: str, request: str | None) -> dict:
     said = _said(row)
     return _fields("comment", str(row["id"]), request,
                   details={"dashboard": slug, "chart": row.get("chart_id")}, content=said, after=said)
+
+
+def export_saved(export_id, plot: dict, *, slug: str, request: str | None) -> dict:
+    """A plot kept for the report: its name, filters and fingerprint, not the file."""
+    said = {"sha256": plot["sha256"], "size": plot["size"], "chart": plot["chart"], "tab": plot["tab"],
+            "tags": plot["tags"], "comment": plot["comment"]}
+    return _fields("export", str(export_id), request, details={"dashboard": slug, "chart": plot["chart"]},
+                   content=said, after=said)
+
+
+def assistant_validated(chart_id, chosen: dict, *, slug: str, request: str | None) -> dict:
+    """A chart made from a query a person validated: the query's fingerprint and text, and the chart's settings."""
+    said = {"sql": chosen["sql"], "sha256": chosen["fingerprint"], "chart": chosen["chart"],
+            "description": chosen.get("description", "")}
+    details = {"dashboard": slug, "sha256": chosen["fingerprint"]}
+    if chosen.get("replaces") is not None:
+        details["replaces"] = chosen["replaces"]
+    return _fields("chart", str(chart_id), request, details=details, content=said, after=said)
+
+
+def assistant_removed(chart_id, title: str, *, slug: str, request: str | None) -> dict:
+    """One of the assistant's charts taken off a dashboard because a person clearly asked; the chart itself stays."""
+    return _fields("chart", str(chart_id), request, details={"dashboard": slug}, before={"title": title})
+
+
+def assistant_changed(chart_id, *, slug: str, request: str | None, changes: dict, before: dict, after: dict) -> dict:
+    """A chart changed in place with the chart assistant (scale, kind, title): what was asked, and its settings before
+    and after."""
+    return _fields("chart", str(chart_id), request, details={"dashboard": slug}, content=changes, before=before,
+                   after=after)
 
 
 def comment_deleted(row: dict, *, slug: str, request: str | None) -> dict:

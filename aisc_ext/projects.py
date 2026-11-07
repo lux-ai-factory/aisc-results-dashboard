@@ -324,6 +324,7 @@ def _unregister(pid, *, store) -> None:
         for key, spec in list(store.items(kind).items()):
             if spec.get(PROJECT_TAG) == pid:
                 store.delete(kind, key)
+    store.forget_tiles(pid)
 
 
 def charts_of(charts, datasets) -> dict[str, dict]:
@@ -598,6 +599,39 @@ class SupersetStore:
             self._db().session.delete(piece)
 
     # ---- plugin tiles (aisc_ext/plugin_tiles.py): what a sync reads and writes ----
+    def tile_was_made(self, slug):
+        from aisc_ext.made_tiles import AiscMadeTile
+
+        return self._db().session.get(AiscMadeTile, slug) is not None
+
+    def remember_tile(self, slug):
+        from aisc_ext.made_tiles import AiscMadeTile
+
+        session = self._db().session
+        if session.get(AiscMadeTile, slug) is None:
+            session.add(AiscMadeTile(slug=slug))
+            session.commit()
+
+    def forget_tiles(self, pid):
+        from aisc_ext.made_tiles import AiscChangedChart, AiscMadeTile, AiscRemovedChart
+
+        session = self._db().session
+        for model in (AiscMadeTile, AiscRemovedChart, AiscChangedChart):
+            session.query(model).filter(model.slug.like(f"aisc-{_hex(pid)}-%")).delete(synchronize_session=False)
+        session.commit()
+
+    def changed_charts(self, slug) -> dict:
+        import json
+
+        from aisc_ext.made_tiles import AiscChangedChart
+
+        return {r.chart_uuid: json.loads(r.changes) for r in self._db().session.query(AiscChangedChart).filter_by(slug=slug)}
+
+    def removed_charts(self, slug) -> set:
+        from aisc_ext.made_tiles import AiscRemovedChart
+
+        return {r.chart_uuid for r in self._db().session.query(AiscRemovedChart).filter_by(slug=slug)}
+
     def source(self, pid):
         """The project's connection and results dataset, as the bundle names them; None if not registered."""
         from superset.connectors.sqla.models import SqlaTable  # type: ignore
