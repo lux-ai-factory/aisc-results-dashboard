@@ -630,3 +630,18 @@ def test_adding_radars_keeps_the_uuid_every_plugin_chart_had_before():
     assert table in s.charts and s.charts[table]["params"]["viz_type"] == "table"
     placed, linked = on_dashboard(s, charts.plugin_slug(PID, PLUGIN))
     assert table in placed and table in linked and len(placed) == 3
+
+
+def test_a_stored_change_the_default_chart_can_no_longer_take_keeps_only_its_title(tiles, charts, caplog):
+    """A new plugin version turns a changed bar chart into a table: the sync goes on, the chart keeps the name
+    given with the assistant, the scale change is dropped and said in the log."""
+    s = Superset()
+    slug = charts.plugin_slug(PID, PLUGIN)
+    sync(tiles, s, V2)
+    table = charts.chart_uuid(PID, PLUGIN, 1, "Drift tests per feature")
+    s.changed[slug] = {table: {"axis_max": 1, "title": "Drift tests, my name"}}
+    with caplog.at_level("WARNING"):
+        assert sync(tiles, s, V2, "0.4.2")["slug"] == slug
+    assert s.charts[table]["name"] == "Drift tests, my name"
+    assert s.charts[table]["params"]["viz_type"] == "table"
+    assert table in caplog.text and "no axis or kind" in caplog.text

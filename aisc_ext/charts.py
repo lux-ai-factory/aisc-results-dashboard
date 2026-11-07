@@ -15,6 +15,7 @@ and a chartId placeholder next to each chart's uuid in the layout.
 Pure Python: no Superset import, so it is tested without the app."""
 from __future__ import annotations
 
+import logging
 import uuid
 
 import yaml
@@ -28,6 +29,7 @@ TABLE_ROW_LIMIT = 50000
 _KINDS = {"bars": "echarts_timeseries_bar", "line": "echarts_timeseries_line", "table": "table", "pie": "pie"}
 #: Superset's number format for a chart whose values are ratios from 0 to 1 (value_format "percent")
 PERCENT = ".0%"
+_log = logging.getLogger(__name__)
 _NAMESPACE = uuid.UUID("6f2a7c1e-4b3d-4e8a-9c5f-0d1e2f3a4b5c")
 _VERSION = "1.0.0"
 _TIMESTAMP = "2026-10-04T00:00:00+00:00"
@@ -383,7 +385,10 @@ def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset
         name = default_title(v)
         if (changes := (changed or {}).get(cid)):      # changed by someone with the chart assistant: kept
             from aisc_ext.assistant.service import changed_params
-            viz_type, params = changed_params(viz_type, params, {k: v for k, v in changes.items() if k != "title"})
+            try:
+                viz_type, params = changed_params(viz_type, params, {k: v for k, v in changes.items() if k != "title"})
+            except ValueError as exc:                   # the default no longer takes it: only its name is kept
+                _log.warning("chart %s of %s keeps only its name: %s", cid, plugin, exc)
             name = changes.get("title") or name
         files[f"charts/{cid}.yaml"] = _chart_file(chart_id=cid, name=name, viz_type=viz_type, params=params,
                                                   description=description, dataset_uuid=dataset_uuid)
