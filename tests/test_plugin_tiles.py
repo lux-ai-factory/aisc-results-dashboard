@@ -209,7 +209,7 @@ def test_a_sync_makes_the_plugins_dashboard_its_starter_and_its_defaults(tiles, 
     assert len(placed) == 3 and placed == linked
     assert charts.starter_uuid(PID, PLUGIN) not in placed                 # the starter stays off the dashboard
     assert s.dashboards[slug]["roles"] == [f"AiscProject_{HEX}"]
-    assert s.dashboards[slug]["title"] == "mcas · Data Drift"
+    assert s.dashboards[slug]["title"] == "Data Drift"
     nf = {f["name"]: f for f in s.dashboards[slug]["metadata"]["native_filter_configuration"]}
     assert nf["Version"]["defaultDataMask"]["filterState"]["value"] == [2]
     assert nf["Run"]["defaultDataMask"]["filterState"]["value"] == [RUN_5, RUN_4, RUN_2]

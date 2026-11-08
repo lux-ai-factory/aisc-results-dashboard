@@ -493,10 +493,11 @@ def native_filters(dataset_uuid: str, default_version: int | None = None, defaul
             select("NATIVE_FILTER-local", "Local", "local_run", [NOT_LOCAL])]
 
 
-def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset_uuid, dataset_name,
+def bundle(*, pid, plugin, label, version, visualizations, dataset_uuid, dataset_name,
            database_uuid, database_name, sqlalchemy_uri, columns, starter_chart_id, user_part=None,
            default_version=None, default_runs=(), values=None, skip=frozenset(), changed=None) -> dict:
-    """The export bundle of one plugin's dashboard in one project: {path in the ZIP: YAML text}. The tile opens
+    """The export bundle of one plugin's dashboard in one project: {path in the ZIP: YAML text}. The dashboard is
+    titled by the tool's label alone (the project is already known from where it is listed). The tile opens
     on default_version and default_runs (native_filters); no default run means the plugin has not run yet."""
     files = {"metadata.yaml": metadata("Dashboard")}
     files.update(source_files(dataset_uuid=dataset_uuid, dataset_name=dataset_name, database_uuid=database_uuid,
@@ -518,7 +519,7 @@ def bundle(*, pid, project_name, plugin, label, version, visualizations, dataset
                                                   description=description, dataset_uuid=dataset_uuid)
         placed.append((cid, name, viz_type))
     files[f"dashboards/{dashboard_uuid(pid, plugin)}.yaml"] = _dump({
-        "dashboard_title": f"{project_name} · {label}", "description": None, "css": None,
+        "dashboard_title": label, "description": None, "css": None,
         "slug": plugin_slug(pid, plugin), "certified_by": None, "certification_details": None, "published": True,
         "uuid": dashboard_uuid(pid, plugin), "version": _VERSION,
         "position": layout(label=label, version=version, placed=placed,

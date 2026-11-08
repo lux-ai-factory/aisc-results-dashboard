@@ -232,7 +232,7 @@ LATEST_OF_V1 = "Run 2 · 04 Oct 2026, 20:39"
 
 
 def make_bundle(charts, visualizations=DRIFT, user_part=None, default_version=2, default_runs=(LATEST, LATEST_OF_V1)):
-    return charts.bundle(pid=PID, project_name="mcas", plugin="data-monitor::DataDriftPlugin", label="Data Drift",
+    return charts.bundle(pid=PID, plugin="data-monitor::DataDriftPlugin", label="Data Drift",
                          version="0.4.1", visualizations=visualizations, dataset_uuid=DATASET_UUID,
                          dataset_name="engine_results_x", database_uuid=DATABASE_UUID, database_name="AISC mcas",
                          sqlalchemy_uri="postgresql+psycopg2://dashboard_ro:XXXXXXXXXX@postgres:5432/project_x",
@@ -255,7 +255,7 @@ def test_the_bundle_holds_what_the_import_needs(charts):
         assert c["params"]["aisc_chart_id"] and c["params"]["aisc_plugin"] == "data-monitor::DataDriftPlugin"
     dash = yaml.safe_load(files[next(k for k in files if k.startswith("dashboards/"))])
     assert dash["slug"] == charts.plugin_slug(PID, "data-monitor::DataDriftPlugin")
-    assert dash["dashboard_title"] == "mcas · Data Drift"
+    assert dash["dashboard_title"] == "Data Drift"
     placed = [v for v in dash["position"].values() if isinstance(v, dict) and v.get("type") == "CHART"]
     assert len(placed) == 3 and all("chartId" in p["meta"] and "uuid" in p["meta"] for p in placed)
 
@@ -428,7 +428,7 @@ def test_every_filter_offers_only_the_values_of_its_plugins_own_results(charts):
 
 
 def test_the_tile_names_its_tool_in_its_filters(charts):
-    files = charts.bundle(pid="p", project_name="P", plugin="pkg::Plugin", label="StrongREJECT (Mijke)", version="1",
+    files = charts.bundle(pid="p", plugin="pkg::Plugin", label="StrongREJECT (Mijke)", version="1",
                           visualizations=[], dataset_uuid="ds", dataset_name="engine_results_x", database_uuid="db",
                           database_name="db", sqlalchemy_uri="postgresql://x", columns=["tool", "run"],
                           starter_chart_id=None)

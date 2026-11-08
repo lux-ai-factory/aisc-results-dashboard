@@ -131,13 +131,14 @@ def sync_plugin(pid, project_name: str, plugin: str, label: str, version: str, v
 
     Holds the project's lock throughout: two syncs at once would both make a new dashboard. The
     results dataset is first brought up to date when older code registered it, so the tile never waits on
-    the platform's next registration."""
+    the platform's next registration. project_name is still taken from the platform but no longer shown: the
+    dashboard is titled by the tool's label."""
     pid = _pid(pid)
     with store.project_lock(pid):
-        return _sync(pid, project_name, plugin, label, version, visualizations, store=store, importer=importer)
+        return _sync(pid, plugin, label, version, visualizations, store=store, importer=importer)
 
 
-def _sync(pid, project_name, plugin, label, version, visualizations, *, store, importer) -> dict:
+def _sync(pid, plugin, label, version, visualizations, *, store, importer) -> dict:
     source = store.source(pid)
     if source is None:
         raise ProjectNotRegistered(f"project {pid} is not registered in the dashboard")
@@ -165,7 +166,7 @@ def _sync(pid, project_name, plugin, label, version, visualizations, *, store, i
     previous_defaults = {c["uuid"] for c in state["charts"] if c["aisc"]} if state else set()
     removed = store.removed_charts(slug)          # defaults someone removed with the chart assistant stay removed
 
-    files = charts.bundle(project_name=project_name or pid, version=version, visualizations=visualizations,
+    files = charts.bundle(version=version, visualizations=visualizations,
                           starter_chart_id=starter_id, user_part=kept,
                           default_version=default_version, default_runs=default_runs, values=values,
                           skip=removed, changed=store.changed_charts(slug), **common)
