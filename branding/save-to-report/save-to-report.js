@@ -249,11 +249,13 @@
       var chosen = rows.filter(function (r) { return r.keep.checked; });
       if (!chosen.length) { said.textContent = 'Tick at least one plot.'; return; }
       save.disabled = true; said.textContent = 'Saving…';
+      // one id for every plot of this click: the report shows each tool's latest save
+      var saveId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
       csrf().then(function (token) {
         return chosen.reduce(function (done, r) {
           return done.then(function () {
             return send(token, { dashboard_id: dashboard, chart: r.plot.chart, tab: tab, tags: filterTags,
-                                 svg: r.plot.svg, comment: r.note.value, rows: r.plot.rows });
+                                 svg: r.plot.svg, comment: r.note.value, rows: r.plot.rows, save_id: saveId });
           });
         }, Promise.resolve());
       }).then(function () {

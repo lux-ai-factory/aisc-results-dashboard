@@ -61,7 +61,7 @@ class ReportExportApi(BaseApi):
         if plot["chart"] not in names:
             return self.response_400(message="the plot must name a chart placed on this dashboard")
         row = AiscReportPlot(dashboard_id=dashboard.id, chart=plot["chart"], tab=plot["tab"], tags=plot["tags"],
-                             svg=plot["svg"], sha256=plot["sha256"], comment=plot["comment"], rows=plot["rows"],
+                             svg=plot["svg"], sha256=plot["sha256"], comment=plot["comment"], rows=plot["rows"], save_id=plot["save_id"],
                              author_sub=str(user.username), author_name=user.get_full_name() or user.username)
         db.session.add(row)
         db.session.flush()

@@ -290,6 +290,7 @@ def _install_extension(app):
             with db.engine.begin() as conn:
                 conn.execute(text("ALTER TABLE aisc_comment ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP"))
                 conn.execute(text("ALTER TABLE aisc_report_plot ADD COLUMN IF NOT EXISTS rows INTEGER"))
+                conn.execute(text("ALTER TABLE aisc_report_plot ADD COLUMN IF NOT EXISTS save_id VARCHAR(64)"))
             ledger.OUTBOX.metadata.create_all(db.engine)
         except Exception:                                               # noqa: BLE001
             logging.getLogger(__name__).exception("ledger: the added columns or the outbox were not made here")

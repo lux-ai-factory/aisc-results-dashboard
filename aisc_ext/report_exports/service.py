@@ -88,6 +88,18 @@ def _rows(value) -> int | None:
     return value
 
 
+_SAVE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _save_id(value) -> str | None:
+    """The id one Save to report click gives all the plots it saves: a short plain token, or None when not sent."""
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str) or not _SAVE_ID.match(value):
+        raise ValueError("the save id must be a short plain token")
+    return value
+
+
 def read_plot(body: dict) -> dict:
     """{svg (bytes), sha256, size, chart, tab, tags, comment, rows}; ValueError when it cannot be kept."""
     chart = str(body.get("chart") or "").strip()
@@ -103,4 +115,4 @@ def read_plot(body: dict) -> dict:
     data = text.encode()
     return {"svg": data, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "chart": chart[:MAX_NAME],
             "tab": str(body.get("tab") or "").strip()[:MAX_NAME], "tags": _tags(body.get("tags")), "comment": comment,
-            "rows": _rows(body.get("rows"))}
+            "rows": _rows(body.get("rows")), "save_id": _save_id(body.get("save_id"))}

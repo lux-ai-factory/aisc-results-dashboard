@@ -125,3 +125,17 @@ def test_the_rows_column_is_added_to_a_table_made_before_it_existed():
     root = Path(__file__).resolve().parents[1]
     assert "rows = Column(Integer, nullable=True)" in (root / "aisc_ext/report_exports/model.py").read_text()
     assert "ALTER TABLE aisc_report_plot ADD COLUMN IF NOT EXISTS rows INTEGER" in (root / "superset_config.py").read_text()
+
+
+def test_a_plot_carries_the_id_of_the_save_it_belongs_to():
+    from aisc_ext.report_exports.service import read_plot
+    body = {"chart": "By register", "svg": '<svg xmlns="http://www.w3.org/2000/svg"></svg>'}
+    assert read_plot({**body, "save_id": "a1b2-c3d4"})["save_id"] == "a1b2-c3d4"
+    assert read_plot(body)["save_id"] is None
+
+
+@pytest.mark.parametrize("bad", ["x" * 65, "two words", "<script>", 12])
+def test_a_save_id_that_is_not_a_short_plain_token_is_refused(bad):
+    from aisc_ext.report_exports.service import read_plot
+    with pytest.raises(ValueError):
+        read_plot({"chart": "c", "svg": '<svg xmlns="http://www.w3.org/2000/svg"></svg>', "save_id": bad})

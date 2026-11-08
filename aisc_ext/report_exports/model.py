@@ -23,6 +23,9 @@ class AiscReportPlot(Model):
     comment = Column(Text, nullable=False, default="")
     #: the rows the chart's query gave when the plot was saved (None: saved by a page that did not send them)
     rows = Column(Integer, nullable=True)
+    #: the id of the Save to report click that saved it (one click saves several plots; the report shows each
+    #: dashboard's latest); None for plots saved before clicks had one
+    save_id = Column(String(64), nullable=True)
     author_sub = Column(String(255), nullable=False)
     author_name = Column(String(255), nullable=False)
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
