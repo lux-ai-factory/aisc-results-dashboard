@@ -797,4 +797,4 @@ class SupersetStore:
     def import_dashboard(self, files):
         from superset.commands.dashboard.importers.dispatcher import ImportDashboardsCommand  # type: ignore
 
-        self._as_bridge(ImportDashboardsCommand(files, overwrite=True))
+        self._as_bridge(ImportDashboardsCommand(files, overwrite=True).run)
