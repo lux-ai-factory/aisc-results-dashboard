@@ -15,7 +15,8 @@ def test_the_hook_loads_the_button_with_the_pages_nonce():
 
 def test_the_button_shows_only_on_a_dashboard_and_names_what_it_does():
     text = BUTTON.read_text()
-    assert "superset" in text and "dashboard" in text and "location.pathname.match" in text and "Save to report" in text
+    # which dashboard is open comes from dashboard-pages.js (tests/test_dashboard_pages.py runs it)
+    assert "aiscDashboardPages.watch" in text and "Save to report" in text
 
 
 def test_the_button_makes_a_vector_file_per_plot_with_the_filters_as_tags():
@@ -35,7 +36,7 @@ def test_the_hook_renders_with_nothing_but_what_an_including_page_gives_it():
     env = jinja2.Environment(undefined=jinja2.StrictUndefined)
     html = env.from_string(HOOK.read_text()).render(csp_nonce=lambda: "the-nonce", assets_prefix="")
     assert 'nonce="the-nonce"' in html
-    assert env.from_string(HOOK.read_text()).render(assets_prefix="").count("<script") == 3      # no Talisman: no nonce
+    assert env.from_string(HOOK.read_text()).render(assets_prefix="").count("<script") == 4      # no Talisman: no nonce
 
 
 def test_the_button_sends_the_picture_with_the_csrf_token_to_the_export_route():

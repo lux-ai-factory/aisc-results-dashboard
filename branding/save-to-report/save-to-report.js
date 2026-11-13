@@ -3,9 +3,8 @@
    filters are read from the filter bar as text, and the rows the chart draws from row-counts.js. The person picks what to
    keep and can add a comment per plot. */
 (function () {
-  var m = location.pathname.match(/^\/superset\/dashboard\/([^/]+)/);
-  if (!m) return;
-  var dashboard = decodeURIComponent(m[1]);
+  /* the dashboard open now (its id or slug), told by dashboard-pages.js at load and at every in-app navigation */
+  var dashboard = null;
   var ID = 'aisc-save-to-report';
   var folder = document.currentScript.src.replace(/[^/]*$/, '');
 
@@ -291,10 +290,20 @@
     b.onclick = function () { open(b); };
     document.body.append(b);
   }
+  function remove() {
+    var b = document.getElementById(ID);
+    if (b) b.remove();
+  }
+  /* the button belongs to the dashboard open now: added on a dashboard, removed elsewhere, and its slug read again */
+  function follow(open) {
+    dashboard = open;
+    slugOnce = null;
+    if (open) add(); else remove();
+  }
+  window.aiscSaveToReport = { dashboard: function () { return dashboard; } };
   function start() {
-    add();
-    styleOnScreen();
-    setInterval(styleOnScreen, 1000);
+    window.aiscDashboardPages.watch(follow);
+    setInterval(function () { if (dashboard) styleOnScreen(); }, 1000);
   }
   if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
 })();

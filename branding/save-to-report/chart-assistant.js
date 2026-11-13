@@ -4,18 +4,18 @@
    to a plot it made replaces that plot in place); a plot it made is removed at once when the person clearly asks. The
    model's words are always shown as text. */
 (function () {
-  var m = location.pathname.match(/^\/superset\/dashboard\/([^/]+)/);
-  if (!m) return;
-  var dashboard = decodeURIComponent(m[1]);
+  /* the dashboard open now (its id or slug), told by dashboard-pages.js at load and at every in-app navigation */
+  var dashboard = null;
   var ID = 'aisc-chart-assistant';
   var folder = document.currentScript.src.replace(/[^/]*$/, '');
   var conversation = null;
   /* What the panel has shown, kept in this tab per dashboard, so closing the panel or reloading the page keeps the
      conversation: [{who, text}] and [{proposal}] in order. */
-  var STORE_KEY = 'aisc-assistant-conversation@' + dashboard;
+  var STORE_KEY = null;
   var shown = [];
 
   function save() {
+    if (!STORE_KEY) return;
     try { sessionStorage.setItem(STORE_KEY, JSON.stringify({ conversation: conversation, shown: shown })); } catch (e) {}
   }
 
@@ -233,6 +233,21 @@
     b.id = ID; b.type = 'button'; b.onclick = panel;
     document.body.append(b);
   }
-  restore();
-  if (document.body) add(); else document.addEventListener('DOMContentLoaded', add);
+  function remove() {
+    [ID, ID + '-panel'].forEach(function (id) { var n = document.getElementById(id); if (n) n.remove(); });
+  }
+  /* the button and the panel belong to the dashboard open now: on another dashboard, its own conversation comes back */
+  function follow(open) {
+    if (open === dashboard) return;
+    remove();
+    dashboard = open;
+    slugOnce = null;
+    conversation = null; shown = [];
+    STORE_KEY = open ? 'aisc-assistant-conversation@' + open : null;
+    if (!open) return;
+    restore();
+    add();
+  }
+  function start() { window.aiscDashboardPages.watch(follow); }
+  if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);
 })();

@@ -83,14 +83,16 @@
     of: function (id) { return counts[idOf(id)]; },
   };
 
-  if (!/^\/superset\/dashboard\//.test((window.location || {}).pathname || '')) return;
+  /* Superset opens dashboards without loading a page, so the watch is set on every page and counts only while a
+     dashboard is open */
+  function onDashboard() { return /^\/superset\/dashboard\//.test((window.location || {}).pathname || ''); }
   var original = window.fetch;
   if (typeof original === 'function') {
     window.fetch = function (input, init) {
       var url = input && typeof input === 'object' && 'url' in input ? input.url : input;
       var body = init && init.body;
       var answer = original.apply(window, arguments);
-      if (isChartData(url)) {
+      if (onDashboard() && isChartData(url)) {
         answer.then(function (response) { note(url, body, response); }, function () {});
       }
       return answer;
