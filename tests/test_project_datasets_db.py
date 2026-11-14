@@ -185,8 +185,11 @@ def _seed_platform():
     if psql("SELECT to_regnamespace('core') IS NULL;").stdout.strip() == "t":
         for f in ("init/platform-db.sql", "init/project-databases.sql"):
             psql((ROOT / f).read_text())
+    # the owner roles (safe to run again): the platform migrates and provisions as platform_owner
+    psql((ROOT / "init/owner-roles.sql").read_text())
+    psql((ROOT / "init/project-database-setup.sql").read_text(), db="template1")
     for f in sorted((ROOT / "platform/migrations").glob("*.sql")):
-        psql("SET ROLE platform_rw;\n" + f.read_text())
+        psql("SET ROLE platform_owner;\nSET search_path = core;\n" + f.read_text())
     psql(f"INSERT INTO core.project (pid, name, slug) VALUES ('{P}', 'MCAS', 'mcas'), ('{Q}', 'Other', 'other');")
 
 
@@ -196,9 +199,9 @@ def _seed_project(db, versions, eval_version, *, answer_version=None):
     answer_version, one controls answer stamped with it. The versions go in
     before the answer, so controls' foreign key to project.system holds."""
     pid = str(uuid.UUID(db.removeprefix("project_")))
-    psql(f'CREATE DATABASE "{db}" OWNER platform_rw;')
+    psql(f'CREATE DATABASE "{db}" OWNER platform_owner;')
     for f in sorted((ROOT / "platform/project-template").glob("*.sql")):
-        psql("SET ROLE platform_rw;\n" + f.read_text(), db=db)
+        psql("SET ROLE platform_owner;\n" + f.read_text(), db=db)
     # Prisma makes its bookkeeping table before it applies a migration, and the
     # controls history relies on it (20260926000100 revokes the readers' SELECT on
     # it), so this replay with psql makes it first, with Prisma's own definition.
