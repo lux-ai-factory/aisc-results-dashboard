@@ -17,6 +17,11 @@ import logging
 import os
 
 from aisc_ext import branding
+from aisc_ext.switches import check_environment
+
+# A bad AUTH_ENABLED or LEDGER_MODE stops the dashboard (SwitchInvalid names the variable) instead of
+# quietly turning the ledger off.
+check_environment()
 
 # No default on purpose. This key signs every session cookie, so a value shipped
 # in the repository would let anyone who read it forge a session as any user,

@@ -32,6 +32,8 @@ from datetime import datetime, timezone
 
 from sqlalchemy import JSON, Column, DateTime, Integer, MetaData, String, Table, select, update
 
+from aisc_ext.switches import ledger_mode
+
 _log = logging.getLogger(__name__)
 #: a project's dashboard: aisc-<pid hex>, or a plugin's, aisc-<pid hex>-<plugin> (charts.plugin_slug)
 _SLUG = re.compile(r"^aisc-([0-9a-f]{32})(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$")
@@ -48,7 +50,8 @@ OUTBOX = Table(
 
 
 def on() -> bool:
-    return os.environ.get("LEDGER_MODE", "off").strip().lower() in ("record", "enforce")
+    """True unless LEDGER_MODE is off; absent means record, and a bad value raises SwitchInvalid."""
+    return ledger_mode() != "off"
 
 
 def project_of(slug) -> str | None:

@@ -215,7 +215,7 @@ the aisc repo's `docker-compose.development.yml` sets.
 | `AISC_PROJECT_DB_HOSTPORT` | Host and port of the project databases, used in each project connection. | `postgres:5432` (stack: same) |
 | `DASHBOARD_RO_PASSWORD` | Password of `dashboard_ro` in the project connections. Required: without it the bridge registers nothing (503). | none (stack: from `scripts/secrets.sh`) |
 | `DASHBOARD_BRIDGE_TOKEN` | Shared secret the platform sends to the bridge. Unset: the bridge refuses every call. | unset (stack: from `scripts/secrets.sh`) |
-| `LEDGER_MODE` | `off`, `record` or `enforce`. `record` and `enforce` queue ledger events; any other value is off. | `off` (stack: `record`) |
+| `LEDGER_MODE` | `off`, `record` or `enforce`. `record` and `enforce` queue ledger events; any other value, empty included, stops the dashboard at start (`aisc_ext/switches.py`, a copy of the shared parser). | absent means `record` (stack: `record`) |
 | `PLATFORM_URL` | Base URL of the platform service, for ledger events. Unset: events stay queued. | unset (stack: `http://platform:8000`, or `DASHBOARD_PLATFORM_URL`) |
 | `PLATFORM_LEDGER_DASHBOARD_TOKEN` | Token for the platform's internal ledger route. Unset: events stay queued. | unset (stack: from `scripts/secrets.sh`) |
 | `AISC_OAUTH` | `1` turns on Superset's own Keycloak sign-in (standalone use). | off (stack: `0`) |
