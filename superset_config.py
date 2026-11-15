@@ -299,6 +299,16 @@ def _install_extension(app):
             ledger.OUTBOX.metadata.create_all(db.engine)
         except Exception:                                               # noqa: BLE001
             logging.getLogger(__name__).exception("ledger: the added columns or the outbox were not made here")
+        # A project's dashboard, chart or dataset deleted in Superset itself is queued in the ledger outbox
+        # with the delete, and sent after its commit.
+        from superset.connectors.sqla.models import SqlaTable
+        from superset.models.dashboard import Dashboard
+        from superset.models.slice import Slice
+
+        from aisc_ext.comments.api import _send_queued
+
+        ledger.watch_superset_deletions(dashboard=Dashboard, chart=Slice, dataset=SqlaTable,
+                                        after_commit=_send_queued)
         # Review requests posted with a dashboard's slug were stored under it by older code; they
         # move to the dashboard's id, as comments are keyed. Idempotent.
         try:
