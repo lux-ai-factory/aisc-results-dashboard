@@ -228,13 +228,17 @@ def test_the_run_is_numbered_in_order_of_the_evaluations_and_named_with_its_targ
     named by its number and that name (Run 15 · Local, 4 Nov)."""
     p = importlib.import_module("aisc_ext.projects")
     sql = " ".join(p.engine_results_sql().split())
-    assert "dense_rank() OVER (ORDER BY e.created_at, e.id) AS run_order" in sql
-    assert ("'Run ' || dense_rank() OVER (ORDER BY e.created_at, e.id) || ' · ' || "
+    # numbered over all of the project's evaluations, before only Done runs are kept
+    assert ("JOIN (SELECT id, dense_rank() OVER (ORDER BY created_at, id) AS number "
+            "FROM engine.aisc_backend_evaluation) r ON r.id = e.id") in sql
+    assert "r.number AS run_order" in sql
+    assert ("'Run ' || r.number || ' · ' || "
             "COALESCE(NULLIF(btrim(ep.name), ''), "
             "CASE WHEN lm.file IS NOT NULL THEN lm.file || ' · ' WHEN ti.id IS NULL THEN '' "
             "WHEN t.key IS NULL THEN tc.name::text || ' · ' ELSE t.label || ' · ' END || "
             "to_char(e.created_at, 'DD Mon YYYY, HH24:MI')) AS run") in sql
-    assert " WHERE " not in sql.split("FROM", 1)[1]          # test_s11_4: the database is the project
+    # test_s11_4: the database is the project, so the only filter is the run's status (only Done runs are results)
+    assert sql.split("FROM", 1)[1].split(" WHERE ")[1:] == ["e.status = 'Done'"]
 
 
 def test_a_run_on_a_local_model_file_says_so_in_its_own_column():

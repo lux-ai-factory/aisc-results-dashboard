@@ -193,7 +193,9 @@ def _seed_platform():
     psql((ROOT / "init/project-database-setup.sql").read_text(), db="template1")
     for f in sorted((ROOT / "platform/migrations").glob("*.sql")):
         psql("SET ROLE platform_owner;\nSET search_path = core;\n" + f.read_text())
-    psql(f"INSERT INTO core.project (pid, name, slug) VALUES ('{P}', 'MCAS', 'mcas'), ('{Q}', 'Other', 'other');")
+    # another module on the same throwaway may have seeded the platform first
+    psql(f"INSERT INTO core.project (pid, name, slug) VALUES ('{P}', 'MCAS', 'mcas'), ('{Q}', 'Other', 'other')"
+         " ON CONFLICT DO NOTHING;")
 
 
 def _seed_project(db, versions, eval_version, *, answer_version=None):
@@ -222,7 +224,7 @@ SET search_path = engine;
 INSERT INTO aisc_backend_project (pid, name, description, project_id) VALUES (gen_random_uuid(), 'X', '', '{pid}');
 INSERT INTO aisc_backend_metric (pid, name) VALUES (gen_random_uuid(), 'accuracy');
 INSERT INTO aisc_backend_evaluation (pid, status, project_id, system_id)
-  SELECT gen_random_uuid(), 'Finished', id, {f"'{eval_version}'" if eval_version else "NULL"} FROM aisc_backend_project;
+  SELECT gen_random_uuid(), 'Done', id, {f"'{eval_version}'" if eval_version else "NULL"} FROM aisc_backend_project;
 INSERT INTO aisc_backend_observation (pid, evaluation_id) SELECT gen_random_uuid(), id FROM aisc_backend_evaluation;
 INSERT INTO aisc_backend_measurement (pid, time, score, unit, metric_id, observation_id)
   SELECT gen_random_uuid(), now(), 0.9, 'ratio', (SELECT id FROM aisc_backend_metric), id FROM aisc_backend_observation;
@@ -626,7 +628,7 @@ SET ROLE engine_rw;
 SET search_path = engine;
 INSERT INTO aisc_backend_metric (pid, name) VALUES (gen_random_uuid(), 'psi_t23');
 INSERT INTO aisc_backend_evaluation (pid, status, project_id, system_id, created_at)
-  SELECT gen_random_uuid(), 'Finished', id, NULL, ts FROM aisc_backend_project,
+  SELECT gen_random_uuid(), 'Done', id, NULL, ts FROM aisc_backend_project,
          (VALUES (timestamptz '2001-10-04 18:07:00+00'), (timestamptz '2001-10-04 20:39:00+00')) v(ts);
 INSERT INTO aisc_backend_observation (pid, evaluation_id)
   SELECT gen_random_uuid(), id FROM aisc_backend_evaluation WHERE created_at < '2002-01-01';

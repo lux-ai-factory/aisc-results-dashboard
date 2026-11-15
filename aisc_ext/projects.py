@@ -102,20 +102,22 @@ SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
                  AND t.last_card_number < (SELECT max(number) FROM project.saved_system) THEN 'stale'
             ELSE 'current' END AS target_status,
        COALESCE(p.display_name, p.name, 'unknown') AS tool,
-       -- the run as people name it: its number among the project's evaluations, then the name it was given
-       -- (at launch or renamed), else its target (so runs on two targets are told apart in a legend) and when
-       -- it ran
-       'Run ' || dense_rank() OVER (ORDER BY e.created_at, e.id) || ' · ' ||
+       -- the run as people name it: its number among all of the project's evaluations (r, so a run that is not
+       -- Done, hidden below, moves no other run's number), then the name it was given (at launch or renamed),
+       -- else its target (so runs on two targets are told apart in a legend) and when it ran
+       'Run ' || r.number || ' · ' ||
            COALESCE(NULLIF(btrim(ep.name), ''),
            CASE WHEN lm.file IS NOT NULL THEN lm.file || ' · ' WHEN ti.id IS NULL THEN ''
                 WHEN t.key IS NULL THEN tc.name::text || ' · ' ELSE t.label || ' · ' END ||
            to_char(e.created_at, 'DD Mon YYYY, HH24:MI')) AS run,
-       dense_rank() OVER (ORDER BY e.created_at, e.id) AS run_order,
+       r.number AS run_order,
        CASE WHEN lm.file IS NOT NULL THEN 'yes' ELSE 'no' END AS local_run,
        {dimensions}
   FROM engine.aisc_backend_measurement m
   JOIN engine.aisc_backend_observation o ON o.id = m.observation_id
   JOIN engine.aisc_backend_evaluation e ON e.id = o.evaluation_id
+  JOIN (SELECT id, dense_rank() OVER (ORDER BY created_at, id) AS number
+          FROM engine.aisc_backend_evaluation) r ON r.id = e.id
   JOIN engine.aisc_backend_metric met ON met.id = m.metric_id
   LEFT JOIN project.system s ON s.pid = e.system_id
   LEFT JOIN (engine.aisc_backend_evaluationplugin ep
@@ -131,6 +133,8 @@ SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
                              THEN COALESCE(value->'local_model'->>'file', 'local model') END) AS file
                FROM engine.aisc_backend_evaluationinput GROUP BY evaluation_plugin_id) lm
          ON lm.evaluation_plugin_id = ep.id
+ -- a run that failed or was stopped after some of its tests posted measures has no results: only Done runs
+ WHERE e.status = 'Done'
 """
 _ENGINE_RESULTS_SQL = _ENGINE_RESULTS_SQL.replace("{dimensions}", ",\n       ".join(
     [f"m.dimensions->>'{key}' AS {key}" for key in DIMENSION_COLUMNS]

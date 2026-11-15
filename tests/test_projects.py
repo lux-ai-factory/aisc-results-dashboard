@@ -122,11 +122,11 @@ def test_engine_dataset_is_on_the_project_connection_and_carries_the_version(pro
 
 
 def test_engine_dataset_filters_on_this_project_only(projects):
-    """The database is the project, so the SQL names no pid and filters on nothing."""
+    """The database is the project, so the SQL names no pid and filters on nothing but the run's status."""
     sql = projects.engine_results_sql()
     assert PID not in sql
     assert OTHER not in sql
-    assert not re.search(r"\bwhere\b", sql, re.I)
+    assert re.findall(r"\bwhere\b.*", sql, re.I) == ["WHERE e.status = 'Done'"]
     assert "project_id" not in sql
 
 
