@@ -99,7 +99,7 @@ SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
             WHEN ti.id IS NULL THEN 'unassigned'
             WHEN t.key IS NULL THEN 'not a target'
             WHEN t.kind = 'component'
-                 AND t.last_card_number < (SELECT max(number) FROM project.system) THEN 'stale'
+                 AND t.last_card_number < (SELECT max(number) FROM project.saved_system) THEN 'stale'
             ELSE 'current' END AS target_status,
        COALESCE(p.display_name, p.name, 'unknown') AS tool,
        -- the run as people name it: its number among the project's evaluations, then the name it was given
