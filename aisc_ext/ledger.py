@@ -100,7 +100,8 @@ def request_id(headers, environ=None) -> str | None:
 #: The actions this module builds fields for; `event` refuses any other.
 ACTIONS = ("dashboard.comment.created", "dashboard.comment.deleted", "dashboard.review.requested",
            "dashboard.review.resolved", "dashboard.export.saved", "dashboard.assistant.validated",
-           "dashboard.assistant.removed", "dashboard.assistant.changed")
+           "dashboard.assistant.removed", "dashboard.assistant.changed",
+           "dashboard.dashboard.deleted", "dashboard.chart.deleted", "dashboard.dataset.deleted")
 
 
 def _fields(item_type, item_id, request, **fields) -> dict:
@@ -347,3 +348,105 @@ def http_sender(post=None):
             return None
         return r.status_code
     return send
+
+
+# Deletions made in Superset itself (its own pages and API), which no route of the extension sees.
+
+#: The project bridge's API: the platform removes a project's objects through it, and records that itself.
+_BRIDGE_PATH = "/api/v1/aisc_project"
+
+
+def _served_request() -> tuple[bool, str | None]:
+    """(whether the request is the project bridge's, the witnessed request id) of the request being served."""
+    try:
+        from flask import has_request_context, request
+    except ImportError:                                                 # outside Superset (the tests)
+        return False, None
+    if not has_request_context():
+        return False, None
+    return request.path.startswith(_BRIDGE_PATH), request_id(request.headers, request.environ)
+
+
+def _project_tag(obj) -> str | None:
+    """The project an object's `extra` tags (``aisc_project``, the bridge's tag on a project's datasets)."""
+    try:
+        extra = json.loads(getattr(obj, "extra", None) or "{}")
+    except (TypeError, ValueError):
+        return None
+    pid = extra.get("aisc_project") if isinstance(extra, dict) else None
+    try:
+        return str(uuid.UUID(str(pid))) if pid else None
+    except ValueError:
+        return None
+
+
+def _loaded(obj, name: str):
+    """A relationship's value when it is already loaded, else None: nothing is read during a flush."""
+    from sqlalchemy import inspect
+    from sqlalchemy.orm.base import NO_VALUE
+
+    try:
+        value = inspect(obj).attrs[name].loaded_value
+    except (KeyError, AttributeError):
+        return None
+    return None if value is NO_VALUE else value
+
+
+def _dashboard_deleted(target) -> tuple[str | None, dict]:
+    slug = getattr(target, "slug", None)
+    return project_of(slug), {"details": {"dashboard": slug}, "before": {"title": getattr(target, "dashboard_title", None)}}
+
+
+def _chart_deleted(target) -> tuple[str | None, dict]:
+    slugs = [getattr(d, "slug", None) for d in (_loaded(target, "dashboards") or [])]
+    slug = next((s for s in slugs if project_of(s)), None)
+    return project_of(slug), {"details": {"dashboard": slug}, "before": {"title": getattr(target, "slice_name", None)}}
+
+
+def _dataset_deleted(target) -> tuple[str | None, dict]:
+    return _project_tag(target), {"details": {}, "before": {"name": getattr(target, "table_name", None)}}
+
+
+_DELETIONS = {"dashboard": ("dashboard.dashboard.deleted", _dashboard_deleted),
+              "chart": ("dashboard.chart.deleted", _chart_deleted),
+              "dataset": ("dashboard.dataset.deleted", _dataset_deleted)}
+
+
+def watch_superset_deletions(*, dashboard=None, chart=None, dataset=None, after_commit=None) -> None:
+    """Queue a deletion of a project's dashboard, chart or dataset made in Superset itself, in the delete's own
+    transaction, as the extension's own writes are. The project comes from the dashboard's slug, a chart's
+    dashboards, or a dataset's project tag; an object of no project queues nothing, and neither do the
+    bridge's removals (the platform records those). `after_commit()` runs after a commit that queued one, to
+    send it."""
+    from sqlalchemy import event as sa_event
+    from sqlalchemy.orm import Session, object_session
+
+    for kind, model in (("dashboard", dashboard), ("chart", chart), ("dataset", dataset)):
+        if model is None:
+            continue
+        action, describe = _DELETIONS[kind]
+
+        def queued(mapper, connection, target, action=action, describe=describe, kind=kind):
+            bridge, request = _served_request()
+            if bridge:
+                return
+            pid, fields = describe(target)
+            if emit(connection, pid, action, _fields(kind, str(target.id), request, **fields)) is not None:
+                session = object_session(target)
+                if session is not None:
+                    session.info["aisc_ledger_queued"] = True
+
+        sa_event.listen(model, "after_delete", queued, propagate=True)
+
+    if chart is not None:
+        def load_dashboards(session, flush_context, instances):
+            for obj in list(session.deleted):
+                if isinstance(obj, chart):
+                    obj.dashboards                                      # noqa: B018 (loaded before the flush)
+        sa_event.listen(Session, "before_flush", load_dashboards)
+
+    if after_commit is not None:
+        def send(session):
+            if session.info.pop("aisc_ledger_queued", False):
+                after_commit()
+        sa_event.listen(Session, "after_commit", send)
