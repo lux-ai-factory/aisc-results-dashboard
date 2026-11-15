@@ -234,7 +234,8 @@ def test_the_run_is_numbered_in_order_of_the_evaluations_and_named_with_its_targ
             "CASE WHEN lm.file IS NOT NULL THEN lm.file || ' · ' WHEN ti.id IS NULL THEN '' "
             "WHEN t.key IS NULL THEN tc.name::text || ' · ' ELSE t.label || ' · ' END || "
             "to_char(e.created_at, 'DD Mon YYYY, HH24:MI')) AS run") in sql
-    assert " WHERE " not in sql.split("FROM", 1)[1]          # test_s11_4: the database is the project
+    # test_s11_4: the database is the project, so the only filter is the run's status (only Done runs are results)
+    assert sql.split("FROM", 1)[1].split(" WHERE ")[1:] == ["e.status = 'Done'"]
 
 
 def test_a_run_on_a_local_model_file_says_so_in_its_own_column():

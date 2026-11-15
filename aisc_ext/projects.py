@@ -131,6 +131,8 @@ SELECT m.pid, m.score, m.unit, m.time, m.dimensions, met.name AS metric,
                              THEN COALESCE(value->'local_model'->>'file', 'local model') END) AS file
                FROM engine.aisc_backend_evaluationinput GROUP BY evaluation_plugin_id) lm
          ON lm.evaluation_plugin_id = ep.id
+ -- a run that failed or was stopped after some of its tests posted measures has no results: only Done runs
+ WHERE e.status = 'Done'
 """
 _ENGINE_RESULTS_SQL = _ENGINE_RESULTS_SQL.replace("{dimensions}", ",\n       ".join(
     [f"m.dimensions->>'{key}' AS {key}" for key in DIMENSION_COLUMNS]
