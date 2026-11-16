@@ -21,6 +21,17 @@ class AiscMadeTile(Model):
     made_at = Column(DateTime, server_default=func.now())
 
 
+class AiscTileBinding(Model):
+    """Which project and plugin a tile the bridge made is, by the dashboard's uuid (Superset lets nobody change a
+    dashboard's uuid; its metadata is its owners' to write, and Superset refuses keys of its own there)."""
+    __tablename__ = "aisc_tile_binding"
+
+    dashboard_uuid = Column(String(36), primary_key=True)
+    pid = Column(String(36), nullable=False)
+    plugin = Column(String(500), nullable=False)
+    bound_at = Column(DateTime, server_default=func.now())
+
+
 class AiscRemovedChart(Model):
     """A default chart someone removed from a plugin tile (with the chart assistant): a sync does not put it back."""
     __tablename__ = "aisc_removed_chart"

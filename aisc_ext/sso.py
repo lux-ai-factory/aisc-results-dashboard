@@ -83,12 +83,13 @@ class KeycloakSecurityManager(SupersetSecurityManager):
         from superset import db  # type: ignore
         from superset.models.dashboard import Dashboard  # type: ignore
 
-        from aisc_ext.projects import BRIDGE_USER
+        from aisc_ext.projects import BRIDGE_USER, SupersetStore
         from aisc_ext.security import plugin_tiles
 
         # Only the tiles the bridge made, by the project role it set: a dashboard's metadata is its owners'
         bridge = self.find_user(username=BRIDGE_USER)
-        found = plugin_tiles(db.session.query(Dashboard), bridge_user_id=getattr(bridge, "id", None))
+        found = plugin_tiles(db.session.query(Dashboard), bridge_user_id=getattr(bridge, "id", None),
+                             bindings=SupersetStore().tile_bindings())
         add, remove = ownership_changes(memberships, [(d.slug, pid, user in d.owners) for d, pid in found])
         for d, _pid in found:
             if d.slug in add:

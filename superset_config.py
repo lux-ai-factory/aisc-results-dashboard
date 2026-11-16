@@ -275,10 +275,10 @@ def _install_extension(app):
             (AiscChartImportView, "Import charts", "fa-file-import"),
         ):
             appbuilder.add_view(view, name, category="Assessment", icon=icon)
-        from aisc_ext.made_tiles import AiscChangedChart, AiscMadeTile, AiscRemovedChart
+        from aisc_ext.made_tiles import AiscChangedChart, AiscMadeTile, AiscRemovedChart, AiscTileBinding
 
         for model in (AiscComment, AiscReviewRequest, AiscMadeTile, AiscRemovedChart, AiscChangedChart,
-                      AiscReportPlot):
+                      AiscReportPlot, AiscTileBinding):
             model.__table__.create(bind=db.engine, checkfirst=True)
         # A deleted comment is hidden, not removed, via aisc_comment.deleted_at, and a
         # saved plot keeps the rows its chart drew in aisc_report_plot.rows.

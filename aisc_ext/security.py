@@ -162,14 +162,16 @@ def ownership_changes(memberships, dashboards) -> tuple[list[str], list[str]]:
     return add, remove
 
 
-def plugin_tiles(dashboards, *, bridge_user_id) -> list[tuple[object, str]]:
+def plugin_tiles(dashboards, *, bridge_user_id, bindings=None) -> list[tuple[object, str]]:
     """The plugin tiles among `dashboards`, with their project: [(dashboard, pid)].
 
     A dashboard's metadata, slug and roles are all written by its owners (Superset's import keeps free
     metadata and makes the importer an owner; an owner may set roles), so none of them alone says which
     project a dashboard is. A tile is a dashboard the bridge made
-    (created_by_fk is BRIDGE_USER's id, which nobody else can set) whose metadata names a plugin and a
-    project, and which carries that project's role (the bridge sets it, aisc_ext/plugin_tiles.py)."""
+    (created_by_fk is BRIDGE_USER's id, which nobody else can set) that the bridge's own record names with a
+    plugin and a project (`bindings`: dashboard uuid -> (pid, plugin), store.tile_bindings), and which carries
+    that project's role (the bridge sets it, aisc_ext/plugin_tiles.py). A tile made before that record existed
+    is named by its metadata until its next sync records it."""
     import json
 
     from aisc_ext.projects import project_role_name
@@ -180,8 +182,10 @@ def plugin_tiles(dashboards, *, bridge_user_id) -> list[tuple[object, str]]:
     for d in dashboards:
         if getattr(d, "created_by_fk", None) != bridge_user_id:
             continue
+        bound = (bindings or {}).get(str(getattr(d, "uuid", "") or ""))
         try:
-            meta = json.loads(d.json_metadata or "{}")
+            meta = ({"aisc_project": bound[0], "aisc_plugin": bound[1]} if bound
+                    else json.loads(d.json_metadata or "{}"))
         except (TypeError, ValueError):
             continue
         if not isinstance(meta, dict) or not meta.get("aisc_plugin") or not meta.get("aisc_project"):

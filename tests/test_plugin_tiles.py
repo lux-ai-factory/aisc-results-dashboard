@@ -56,6 +56,7 @@ class Superset:
         self.values = {"feature": ["age", "income"]}
         self.events = []            # "lock", "unlock" and each import, in order
         self.made_tiles = set()     # the slugs of the tiles made (store.tile_was_made, store.remember_tile)
+        self.bindings = {}          # dashboard uuid -> (pid, plugin) of the tiles made (store.bind_tile)
         self.removed = {}           # slug -> uuids of default charts someone removed (store.removed_charts)
         self.changed = {}           # slug -> {uuid: the assistant's changes} (store.changed_charts)
 
@@ -100,6 +101,9 @@ class Superset:
 
     def remember_tile(self, slug):
         self.made_tiles.add(slug)
+
+    def bind_tile(self, dashboard_uuid, pid, plugin):
+        self.bindings[dashboard_uuid] = (pid, plugin)
 
     def removed_charts(self, slug):
         return set(self.removed.get(slug, set()))

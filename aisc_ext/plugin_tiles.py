@@ -191,4 +191,5 @@ def _sync(pid, plugin, label, version, visualizations, *, store, importer, again
     store.delete_charts(sorted(previous_defaults - set(defaults) - removed))
     store.set_dashboard_roles(slug, [project_role_name(pid)])
     store.remember_tile(slug)
+    store.bind_tile(charts.dashboard_uuid(pid, plugin), pid, plugin)
     return {"slug": slug, "charts": len(defaults)}
