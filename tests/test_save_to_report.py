@@ -185,6 +185,6 @@ def test_each_saved_plot_sends_the_rows_its_chart_draws():
 def test_one_click_saves_all_its_plots_under_one_save_id():
     text = BUTTON.read_text()
     assert "save_id: saveId" in text
-    # made once per click, before the plots are sent one after another
-    click = text[text.index("save.onclick"):]
-    assert click.index("saveId =") < click.index("chosen.reduce")
+    # made once per panel, before any click: the plots are sent one after another under it, and a retry
+    # after a refused plot finishes the same group
+    assert text.index("var saveId =") < text.index("save.onclick") < text.index("chosen.reduce")

@@ -244,23 +244,36 @@
     close.onclick = function () { box.remove(); };
     var said = document.createElement('span');
     said.id = ID + '-said'; said.style.marginLeft = '12px';
+    // one id for every plot of this panel: the report shows each tool's latest save, and a retry after a
+    // refused plot finishes the same group instead of starting a new one
+    var saveId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
     save.onclick = function () {
       var chosen = rows.filter(function (r) { return r.keep.checked; });
       if (!chosen.length) { said.textContent = 'Tick at least one plot.'; return; }
       save.disabled = true; said.textContent = 'Saving…';
-      // one id for every plot of this click: the report shows each tool's latest save
-      var saveId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+      var failed = null;
       csrf().then(function (token) {
         return chosen.reduce(function (done, r) {
           return done.then(function () {
+            if (r.saved) { return; }
             return send(token, { dashboard_id: dashboard, chart: r.plot.chart, tab: tab, tags: filterTags,
-                                 svg: r.plot.svg, comment: r.note.value, rows: r.plot.rows, save_id: saveId });
+                                 svg: r.plot.svg, comment: r.note.value, rows: r.plot.rows, save_id: saveId })
+              .then(function () { r.saved = true; }, function (e) { failed = { row: r, error: e }; throw e; });
           });
         }, Promise.resolve());
       }).then(function () {
         said.textContent = 'Saved ' + chosen.length + ' plot(s). They are now in the report.'; close.textContent = 'Close';
       }).catch(function (e) {
-        said.textContent = 'Not saved: ' + e.message; save.disabled = false;
+        var kept = chosen.filter(function (r) { return r.saved; }).length;
+        if (kept && failed) {
+          // the plots before the refused one are in the report already: say so, and which one was refused
+          said.textContent = 'Saved ' + kept + ' of ' + chosen.length + ' plot(s); "' + failed.row.plot.chart +
+            '" was refused: ' + failed.error.message + '. Save again to send the rest.';
+          close.textContent = 'Close';
+        } else {
+          said.textContent = 'Not saved: ' + e.message;
+        }
+        save.disabled = false;
       });
     };
     card.append(save, close, said); box.append(card); document.body.append(box);
