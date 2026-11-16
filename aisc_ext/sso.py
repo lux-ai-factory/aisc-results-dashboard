@@ -12,7 +12,7 @@ from superset.security import SupersetSecurityManager  # type: ignore
 
 from aisc_ext.projects import MEMBER_PROJECTS_SQL
 from aisc_ext.results_db import membership_uri
-from aisc_ext.security import apply_sign_in, ownership_changes
+from aisc_ext.security import apply_sign_in, follow_memberships, ownership_changes, remember_sign_in
 
 log = logging.getLogger(__name__)
 
@@ -74,8 +74,27 @@ class KeycloakSecurityManager(SupersetSecurityManager):
         memberships = self._member_projects(userinfo.get("subject"))
         apply_sign_in(self, user, userinfo.get("realm_roles", []), memberships,
                       sync_ownership=self._sync_dashboard_ownership)
+        self._remember(userinfo.get("subject"), userinfo.get("realm_roles", []))
         log.info("Synced %s -> %s", user.username, [r.name for r in user.roles])
         return user
+
+    def _remember(self, subject, realm_roles):
+        """Who signed in, kept in Superset's session so each later request can follow their memberships."""
+        import time
+
+        from flask import session
+
+        remember_sign_in(session, subject, realm_roles, time.time())
+
+    def follow_memberships_now(self, user):
+        """Called before each request of a signed-in person: their roles follow their project memberships as
+        they are now, read at most once a minute (security.follow_memberships), not only at sign-in."""
+        import time
+
+        from flask import session
+
+        return follow_memberships(self, user, session, time.time(), self._member_projects,
+                                  sync_ownership=self._sync_dashboard_ownership)
 
     def _sync_dashboard_ownership(self, user, memberships):
         """Owners and editors own their projects' plugin dashboards, so they can add charts to them;

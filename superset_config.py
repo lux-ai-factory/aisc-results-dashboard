@@ -223,6 +223,21 @@ def FLASK_APP_MUTATOR(app):  # noqa: N802 (Superset hook name)
     def _remember_the_project():  # pragma: no cover - exercised in the app
         remember(request.args, session)
 
+    @app.before_request
+    def _follow_the_memberships():  # pragma: no cover - exercised in the app
+        # the person's project memberships as they are now, read again at most once a minute, so a person removed
+        # from a project, or made a viewer, loses those dashboards or edit rights without signing out
+        from flask_login import current_user
+
+        follow = getattr(app.appbuilder.sm, "follow_memberships_now", None)
+        if follow is None or not getattr(current_user, "is_authenticated", False):
+            return None
+        try:
+            follow(current_user._get_current_object())
+        except Exception:                                               # noqa: BLE001 - never block a request
+            logging.getLogger(__name__).warning("memberships not followed on this request", exc_info=True)
+        return None
+
     with app.app_context():
         # No Superset connection to the shared `platform` database is made
         # here. Each project's datasets use that project's own connection, which
