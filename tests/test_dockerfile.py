@@ -9,7 +9,7 @@ DOCKERFILE = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
 
 
 def test_superset_is_the_last_41_release():
-    assert re.search(r"^FROM apache/superset:4\.1\.4$", DOCKERFILE, re.M)
+    assert re.search(r"^FROM apache/superset:4\.1\.4@sha256:[0-9a-f]{64}$", DOCKERFILE, re.M)
 
 
 def test_every_added_package_is_pinned_and_authlib_carries_the_fixes():

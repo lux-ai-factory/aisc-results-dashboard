@@ -1,0 +1,15 @@
+# Kept out of the build: local environments, caches, logs, settings and keys
+.git
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+node_modules
+*.log
+.env
+.env.*
+env.*
+*.key
+*.pem
+tests
