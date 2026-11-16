@@ -71,8 +71,12 @@ def plugin_request(body: dict) -> dict:
     for field in ("plugin", "label", "version", "project_name"):
         _checked_text(str(body.get(field) or ""), field)
     _checked_text(visualizations, "visualizations")
+    again = body.get("again", False)
+    if not isinstance(again, bool):
+        raise ValueError("again: true to make again a tile someone deleted")
     return {"plugin": plugin, "label": label, "version": str(body.get("version") or ""),
-            "project_name": str(body.get("project_name") or ""), "visualizations": visualizations}
+            "project_name": str(body.get("project_name") or ""), "visualizations": visualizations,
+            "again": again}
 
 
 def user_part(position: dict | None, linked: list[dict]) -> dict:
@@ -127,7 +131,7 @@ def sync_plugin(pid, project_name: str, plugin: str, label: str, version: str, v
                 store, importer) -> dict:
     """Make or update the plugin's dashboard in the project. Idempotent: a second sync with the same input
     changes nothing. Returns {"slug", "charts"} (the number of default charts); a tile someone deleted is not made
-    again, and its slug is None.
+    again: its slug is None and "deleted" is true (make_tile_again makes it when a person asks).
 
     Holds the project's lock throughout: two syncs at once would both make a new dashboard. The
     results dataset is first brought up to date when older code registered it, so the tile never waits on
@@ -138,7 +142,16 @@ def sync_plugin(pid, project_name: str, plugin: str, label: str, version: str, v
         return _sync(pid, plugin, label, version, visualizations, store=store, importer=importer)
 
 
-def _sync(pid, plugin, label, version, visualizations, *, store, importer) -> dict:
+def make_tile_again(pid, project_name: str, plugin: str, label: str, version: str, visualizations: list[dict], *,
+                    store, importer) -> dict:
+    """Make again the tile of a plugin someone deleted, as sync_plugin makes a new one, when a person asks for it.
+    The charts people had put under "Your charts" went with the deleted dashboard."""
+    pid = _pid(pid)
+    with store.project_lock(pid):
+        return _sync(pid, plugin, label, version, visualizations, store=store, importer=importer, again=True)
+
+
+def _sync(pid, plugin, label, version, visualizations, *, store, importer, again=False) -> dict:
     source = store.source(pid)
     if source is None:
         raise ProjectNotRegistered(f"project {pid} is not registered in the dashboard")
@@ -155,8 +168,8 @@ def _sync(pid, plugin, label, version, visualizations, *, store, importer) -> di
     state = store.dashboard_state(slug)
     if state is None and (older := charts.older_plugin_slug(pid, plugin)) != slug:
         state = store.dashboard_state(older)      # the import finds it by uuid and gives it the new slug
-    if state is None and store.tile_was_made(slug):
-        return {"slug": None, "charts": 0}        # someone deleted it: it stays deleted
+    if state is None and not again and store.tile_was_made(slug):
+        return {"slug": None, "charts": 0, "deleted": True}   # someone deleted it: it stays deleted until asked
 
     starter_id = None
     if default_runs or visualizations:
