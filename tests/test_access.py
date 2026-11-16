@@ -137,6 +137,7 @@ def _body(path, cls, fn):
     ("aisc_ext/assistant/api.py", "AssistantApi", "message", 'access.may(g.user, dashboard, "change_chart")'),
     ("aisc_ext/assistant/api.py", "AssistantApi", "validate", 'self._project(dashboard_id, "change_chart")'),
     ("aisc_ext/report_exports/api.py", "ReportExportApi", "post", 'access.project_if(user, dashboard, "export")'),
+    ("aisc_ext/report_exports/api.py", "ReportExportApi", "get", 'access.project_if(g.user, dashboard, "export")'),
     ("aisc_ext/import_view.py", "AiscChartImportView", "_mine", 'access.may(g.user, d, "import")'),
 ])
 def test_every_route_names_its_act(path, cls, fn, named):

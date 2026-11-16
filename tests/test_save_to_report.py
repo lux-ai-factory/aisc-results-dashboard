@@ -46,9 +46,10 @@ def test_the_button_sends_the_picture_with_the_csrf_token_to_the_export_route():
 
 def test_the_save_route_is_granted_to_the_roles_that_open_dashboards():
     """A new API has no permission until a role is given one: without this every save answers Forbidden. The route
-    itself then admits only a project's editors and admins."""
+    itself then admits only a project's editors and admins. The question whether one may save (can_get) is
+    open to the same roles, so a viewer is told before drawing plots."""
     source = (HERE / "superset_config.py").read_text()
-    assert '"ReportExportApi": ("can_post",)' in source
+    assert '"ReportExportApi": ("can_post", "can_get")' in source
 
 
 def test_plots_are_saved_for_print_with_the_legend_below_and_dark_axis_names():

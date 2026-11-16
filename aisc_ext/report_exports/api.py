@@ -1,6 +1,7 @@
 # Copyright (c) 2025-2026 University of Luxembourg (SnT) and Luxembourg Institute of Science and Technology (LIST)
 # SPDX-License-Identifier: Apache-2.0
-"""POST /api/v1/aisc_report_export/: keeps one plot of a dashboard the caller may open, with its ledger event, as
+"""GET /api/v1/aisc_report_export/?dashboard=<id or slug>: whether the caller may save a plot of it.
+POST /api/v1/aisc_report_export/: keeps one plot of a dashboard the caller may open, with its ledger event, as
 comments do. Saving is an editor's or an admin's act (a viewer looks and comments), and the plot must name a chart
 placed on that dashboard. The author is the signed-in user, never a value from the body. Imported only inside
 Superset."""
@@ -19,6 +20,27 @@ class ReportExportApi(BaseApi):
     resource_name = "aisc_report_export"
     openapi_spec_tag = "AISC Report exports"
     csrf_exempt = False                               # called with the session cookie, as the comments API
+
+    @expose("/", methods=["GET"])
+    @protect(allow_browser_login=True)
+    @safe
+    def get(self):
+        """Whether the caller may save a plot of this dashboard (?dashboard=<id or slug>), so the Save to report
+        button is off for a viewer before any plot is drawn.
+        ---
+        get:
+          responses:
+            200: {description: may_export}
+        """
+        ref = request.args.get("dashboard")
+        if not ref:
+            return self.response_400(message="dashboard is required")
+        dashboard, status = open_dashboard(ref)
+        if status == 404:
+            return self.response_404()
+        if status == 403:
+            return self.response_403()
+        return self.response(200, result={"may_export": access.project_if(g.user, dashboard, "export") is not None})
 
     @expose("/", methods=["POST"])
     @protect(allow_browser_login=True)
