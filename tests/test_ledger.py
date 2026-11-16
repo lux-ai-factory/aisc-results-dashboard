@@ -426,7 +426,7 @@ def test_a_pass_on_postgres_ends_cleanly_on_the_images_sqlalchemy(monkeypatch):
             return type("R", (), {"scalar": lambda self: True})()
 
     engine = type("E", (), {"dialect": type("D", (), {"name": "postgresql"})(), "connect": lambda self: _Held()})()
-    monkeypatch.setattr(ledger, "_deliver", lambda engine, send, limit: (1, 0))
+    monkeypatch.setattr(ledger, "_pass", lambda engine, send, limit: (1, 0))
     assert ledger._deliver_locked(engine, None, 100) == (1, 0)
     assert [c.split("(")[0] for c in calls] == ["SELECT pg_try_advisory_lock", "SELECT pg_advisory_unlock"]
 

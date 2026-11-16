@@ -2,8 +2,16 @@
 stay in the module that defines them and are imported from it."""
 import importlib
 import os
+import sys
+from pathlib import Path
 
 import pytest
+
+# aisc_identity (the ledger's shared delivery loop): mounted beside aisc_ext in the stack, read here from the
+# AISC checkout this repository sits in
+_IDENTITY = Path(__file__).resolve().parents[3] / "shared/identity"
+if _IDENTITY.is_dir() and str(_IDENTITY) not in sys.path:
+    sys.path.insert(0, str(_IDENTITY))
 
 
 @pytest.fixture

@@ -33,6 +33,7 @@ from datetime import datetime, timezone
 from sqlalchemy import JSON, Column, DateTime, Integer, MetaData, String, Table, select, update
 
 from aisc_ext.switches import ledger_mode
+from aisc_identity import ledger_delivery
 
 _log = logging.getLogger(__name__)
 #: a project's dashboard: aisc-<pid hex>, or a plugin's, aisc-<pid hex>-<plugin> (charts.plugin_slug)
@@ -203,8 +204,8 @@ def emit(conn, project_pid: str | None, action: str, fields: dict) -> int | None
 #: again. 404 is the platform's "no project" (a project deleted after the event was queued): `http_sender`
 #: returns it only when the platform says so, and None for any other 404 (a wrong address). Any other
 #: failure (a wrong token, a wrong address, the platform down) is for the operator to fix, so the event
-#: waits for the next pass.
-REFUSALS = (404, 409, 413, 422)
+#: waits for the next pass. The shared delivery loop's (aisc_identity.ledger_delivery).
+REFUSALS = ledger_delivery.REFUSALS
 _PASS = threading.Lock()
 
 
@@ -235,13 +236,13 @@ def _deliver_locked(engine, send, limit: int) -> tuple[int, int]:
     the whole pass, and a pass that finds it taken does nothing. Other databases (the tests' SQLite)
     have one process."""
     if engine.dialect.name != "postgresql":
-        return _deliver(engine, send, limit)
+        return _pass(engine, send, limit)
     with engine.connect() as held:
         got = held.exec_driver_sql("SELECT pg_try_advisory_lock(%s)" % _PASS_LOCK_KEY).scalar()
         if not got:
             return 0, 0
         try:
-            return _deliver(engine, send, limit)
+            return _pass(engine, send, limit)
         finally:
             # Session-level, so nothing to commit (SQLAlchemy 1.4, Superset's, has no Connection.commit)
             held.exec_driver_sql("SELECT pg_advisory_unlock(%s)" % _PASS_LOCK_KEY)
@@ -266,32 +267,38 @@ def _pending(engine, waiting: set[str], after: int, limit: int):
         return conn.execute(query.order_by(OUTBOX.c.id).limit(limit)).all()
 
 
-def _deliver(engine, send, limit: int) -> tuple[int, int]:
-    sent = failed = 0
+def _pass(engine, send, limit: int) -> tuple[int, int]:
+    """One pass through the shared delivery loop (aisc_identity.ledger_delivery): (sent, not sent). A project
+    the platform answered with anything but a 2xx or a refusal waits this pass, and the others go on."""
     waiting: set[str] = set()                                           # projects whose events wait this pass
-    for row in _rows_to_try(engine, waiting, limit):
-        status = send(row.project_pid, row.event)
-        if status is not None and 200 <= status < 300:
-            with engine.begin() as conn:
-                conn.execute(update(OUTBOX).where(OUTBOX.c.id == row.id)
-                             .values(delivered_at=datetime.now(timezone.utc)))
-            sent += 1
-            continue
-        failed += 1
-        if status is None:
-            _log.warning("ledger: the platform can't be asked; dashboard event %s and the rest stay queued",
-                         row.event.get("event_id"))
-            break
-        if status not in REFUSALS:
-            _log.warning("ledger: the platform answered %s for dashboard event %s; it and its project's later"
-                         " events stay queued", status, row.event.get("event_id"))
-            waiting.add(row.project_pid)
-            continue
+    tried = []
+
+    def send_row(row):
+        tried.append(row)
+        return send(row.project_pid, row.event), ""
+
+    def mark_sent(row):
+        with engine.begin() as conn:
+            conn.execute(update(OUTBOX).where(OUTBOX.c.id == row.id).values(delivered_at=datetime.now(timezone.utc)))
+
+    def mark_refused(row, status, _text):
         _log.error("ledger: the platform refused dashboard event %s (%s, status %s); kept, not sent again",
                    row.event.get("event_id"), row.event.get("action"), status)
         with engine.begin() as conn:
             conn.execute(update(OUTBOX).where(OUTBOX.c.id == row.id).values(refused=status))
-    return sent, failed
+
+    def hold(row, status):
+        _log.warning("ledger: the platform answered %s for dashboard event %s; it and its project's later"
+                     " events stay queued", status, row.event.get("event_id"))
+        waiting.add(row.project_pid)
+
+    def stopped(row, _status):
+        _log.warning("ledger: the platform can't be asked; dashboard event %s and the rest stay queued",
+                     row.event.get("event_id"))
+
+    sent, _ = ledger_delivery.deliver(lambda n: _rows_to_try(engine, waiting, n), mark_sent, mark_refused,
+                                      send_row, limit, hold=hold, stopped=stopped)
+    return sent, len(tried) - sent
 
 
 def _rows_to_try(engine, waiting: set[str], limit: int):
@@ -312,13 +319,12 @@ def _rows_to_try(engine, waiting: set[str], limit: int):
                 break
 
 
-def _no_project(reply) -> bool:
-    """Whether a 404 is the platform's own "no project" answer (platform_service.routes.ledger: _queue_internal)."""
+def _json_text(reply) -> str | None:
+    """The reply's JSON body as text, or None when it is not JSON (a proxy's page)."""
     try:
-        detail = reply.json().get("detail")
-    except Exception:                                                   # noqa: BLE001 (not JSON: a proxy's page)
-        return False
-    return isinstance(detail, str) and detail.startswith("no project ")
+        return json.dumps(reply.json())
+    except Exception:                                                   # noqa: BLE001 (not JSON)
+        return None
 
 
 def http_sender(post=None):
@@ -343,7 +349,7 @@ def http_sender(post=None):
         except Exception:                                               # noqa: BLE001 (the platform is down)
             _log.warning("ledger: the platform can't be reached; dashboard events stay queued")
             return None
-        if r.status_code == 404 and not _no_project(r):
+        if r.status_code == 404 and not ledger_delivery.no_project(_json_text(r)):
             _log.warning("ledger: %s answered 404 without naming the project; check PLATFORM_URL", base)
             return None
         return r.status_code
