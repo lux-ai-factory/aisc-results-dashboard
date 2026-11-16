@@ -528,9 +528,9 @@ def bundle(*, pid, plugin, label, version, visualizations, dataset_uuid, dataset
                            has_run=bool(default_runs)),
         "metadata": {"native_filter_configuration": native_filters(dataset_uuid, default_version, default_runs,
                                                                    tool=label),
-                     "color_scheme": "",
-                     "aisc_project": pid, "aisc_plugin": plugin, "aisc_version": version,
-                     "aisc_charts": [cid for cid, _, _ in placed]}})
+                     # only keys Superset takes back when it saves the metadata itself: which project and plugin
+                     # a tile is, the bridge records apart (plugin_tiles: store.bind_tile)
+                     "color_scheme": ""}})
     return files
 
 

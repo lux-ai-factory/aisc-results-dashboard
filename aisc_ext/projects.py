@@ -616,12 +616,28 @@ class SupersetStore:
             session.add(AiscMadeTile(slug=slug))
             session.commit()
 
+    def bind_tile(self, dashboard_uuid, pid, plugin):
+        from aisc_ext.made_tiles import AiscTileBinding
+
+        session = self._db().session
+        found = session.get(AiscTileBinding, str(dashboard_uuid))
+        if found is None:
+            session.add(AiscTileBinding(dashboard_uuid=str(dashboard_uuid), pid=str(pid), plugin=plugin))
+            session.commit()
+
+    def tile_bindings(self) -> dict:
+        """dashboard uuid -> (project pid, plugin) of every tile the bridge made (security.plugin_tiles)."""
+        from aisc_ext.made_tiles import AiscTileBinding
+
+        return {r.dashboard_uuid: (r.pid, r.plugin) for r in self._db().session.query(AiscTileBinding)}
+
     def forget_tiles(self, pid):
-        from aisc_ext.made_tiles import AiscChangedChart, AiscMadeTile, AiscRemovedChart
+        from aisc_ext.made_tiles import AiscChangedChart, AiscMadeTile, AiscRemovedChart, AiscTileBinding
 
         session = self._db().session
         for model in (AiscMadeTile, AiscRemovedChart, AiscChangedChart):
             session.query(model).filter(model.slug.like(f"aisc-{_hex(pid)}-%")).delete(synchronize_session=False)
+        session.query(AiscTileBinding).filter(AiscTileBinding.pid == str(pid)).delete(synchronize_session=False)
         session.commit()
 
     def changed_charts(self, slug) -> dict:

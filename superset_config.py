@@ -187,7 +187,7 @@ _EXTENSION_GRANTS = {
     # the top menu's "← Back", one level up to the project's AI Assessment Sandbox (aisc_ext/back.py)
     "Back": ("menu_access",),
     "ReviewRequestApi": ("can_list", "can_post", "can_patch"),
-    "ReportExportApi": ("can_post",),
+    "ReportExportApi": ("can_post", "can_get"),
     "AssistantApi": ("can_start", "can_message", "can_validate"),
 }
 
@@ -222,6 +222,21 @@ def FLASK_APP_MUTATOR(app):  # noqa: N802 (Superset hook name)
     @app.before_request
     def _remember_the_project():  # pragma: no cover - exercised in the app
         remember(request.args, session)
+
+    @app.before_request
+    def _follow_the_memberships():  # pragma: no cover - exercised in the app
+        # the person's project memberships as they are now, read again at most once a minute, so a person removed
+        # from a project, or made a viewer, loses those dashboards or edit rights without signing out
+        from flask_login import current_user
+
+        follow = getattr(app.appbuilder.sm, "follow_memberships_now", None)
+        if follow is None or not getattr(current_user, "is_authenticated", False):
+            return None
+        try:
+            follow(current_user._get_current_object())
+        except Exception:                                               # noqa: BLE001 - never block a request
+            logging.getLogger(__name__).warning("memberships not followed on this request", exc_info=True)
+        return None
 
     with app.app_context():
         # No Superset connection to the shared `platform` database is made
@@ -275,10 +290,10 @@ def _install_extension(app):
             (AiscChartImportView, "Import charts", "fa-file-import"),
         ):
             appbuilder.add_view(view, name, category="Assessment", icon=icon)
-        from aisc_ext.made_tiles import AiscChangedChart, AiscMadeTile, AiscRemovedChart
+        from aisc_ext.made_tiles import AiscChangedChart, AiscMadeTile, AiscRemovedChart, AiscTileBinding
 
         for model in (AiscComment, AiscReviewRequest, AiscMadeTile, AiscRemovedChart, AiscChangedChart,
-                      AiscReportPlot):
+                      AiscReportPlot, AiscTileBinding):
             model.__table__.create(bind=db.engine, checkfirst=True)
         # A deleted comment is hidden, not removed, via aisc_comment.deleted_at, and a
         # saved plot keeps the rows its chart drew in aisc_report_plot.rows.

@@ -244,23 +244,36 @@
     close.onclick = function () { box.remove(); };
     var said = document.createElement('span');
     said.id = ID + '-said'; said.style.marginLeft = '12px';
+    // one id for every plot of this panel: the report shows each tool's latest save, and a retry after a
+    // refused plot finishes the same group instead of starting a new one
+    var saveId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
     save.onclick = function () {
       var chosen = rows.filter(function (r) { return r.keep.checked; });
       if (!chosen.length) { said.textContent = 'Tick at least one plot.'; return; }
       save.disabled = true; said.textContent = 'Saving…';
-      // one id for every plot of this click: the report shows each tool's latest save
-      var saveId = Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+      var failed = null;
       csrf().then(function (token) {
         return chosen.reduce(function (done, r) {
           return done.then(function () {
+            if (r.saved) { return; }
             return send(token, { dashboard_id: dashboard, chart: r.plot.chart, tab: tab, tags: filterTags,
-                                 svg: r.plot.svg, comment: r.note.value, rows: r.plot.rows, save_id: saveId });
+                                 svg: r.plot.svg, comment: r.note.value, rows: r.plot.rows, save_id: saveId })
+              .then(function () { r.saved = true; }, function (e) { failed = { row: r, error: e }; throw e; });
           });
         }, Promise.resolve());
       }).then(function () {
         said.textContent = 'Saved ' + chosen.length + ' plot(s). They are now in the report.'; close.textContent = 'Close';
       }).catch(function (e) {
-        said.textContent = 'Not saved: ' + e.message; save.disabled = false;
+        var kept = chosen.filter(function (r) { return r.saved; }).length;
+        if (kept && failed) {
+          // the plots before the refused one are in the report already: say so, and which one was refused
+          said.textContent = 'Saved ' + kept + ' of ' + chosen.length + ' plot(s); "' + failed.row.plot.chart +
+            '" was refused: ' + failed.error.message + '. Save again to send the rest.';
+          close.textContent = 'Close';
+        } else {
+          said.textContent = 'Not saved: ' + e.message;
+        }
+        save.disabled = false;
       });
     };
     card.append(save, close, said); box.append(card); document.body.append(box);
@@ -281,14 +294,29 @@
     }).finally(function () { button.disabled = false; });
   }
 
+  /* a person who may not save (a viewer) gets the button off, with the reason, before drawing plots or typing */
+  var MAY_NOT_SAVE = 'Only an editor or an admin of the project can save a plot to the report.';
+  function askWhetherSaving(b) {
+    var asked = dashboard;
+    fetch('/api/v1/aisc_report_export/?dashboard=' + encodeURIComponent(asked), { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (body) {
+        // only a clear no turns it off: an unanswered question leaves the save to say why it is refused
+        if (dashboard !== asked || !body || !body.result || body.result.may_export !== false) return;
+        b.disabled = true; b.title = MAY_NOT_SAVE;
+        b.style.opacity = '0.6'; b.style.cursor = 'not-allowed';
+      })
+      .catch(function () { /* the save itself says why it is refused */ });
+  }
   function add() {
     if (document.getElementById(ID)) return;
     var b = document.createElement('button');
     b.id = ID; b.type = 'button'; b.textContent = 'Save to report';
     b.style.cssText = 'position:fixed;right:24px;bottom:24px;z-index:99999;padding:8px 14px;background:#000FDF;'
       + 'color:#fff;border:0;border-radius:4px;cursor:pointer;font-size:14px';
-    b.onclick = function () { open(b); };
+    b.onclick = function () { if (!b.disabled) open(b); };
     document.body.append(b);
+    askWhetherSaving(b);
   }
   function remove() {
     var b = document.getElementById(ID);

@@ -56,6 +56,7 @@ class Superset:
         self.values = {"feature": ["age", "income"]}
         self.events = []            # "lock", "unlock" and each import, in order
         self.made_tiles = set()     # the slugs of the tiles made (store.tile_was_made, store.remember_tile)
+        self.bindings = {}          # dashboard uuid -> (pid, plugin) of the tiles made (store.bind_tile)
         self.removed = {}           # slug -> uuids of default charts someone removed (store.removed_charts)
         self.changed = {}           # slug -> {uuid: the assistant's changes} (store.changed_charts)
 
@@ -100,6 +101,9 @@ class Superset:
 
     def remember_tile(self, slug):
         self.made_tiles.add(slug)
+
+    def bind_tile(self, dashboard_uuid, pid, plugin):
+        self.bindings[dashboard_uuid] = (pid, plugin)
 
     def removed_charts(self, slug):
         return set(self.removed.get(slug, set()))
@@ -407,7 +411,7 @@ def test_a_request_names_the_plugin_and_its_charts(tiles):
     req = tiles.plugin_request({"plugin": "x::Y", "label": "Y", "version": "1.0", "project_name": "mcas",
                                 "visualizations": [{"chart_type": "bars", "metrics": ["a"], "title": "A"}]})
     assert req == {"plugin": "x::Y", "label": "Y", "version": "1.0", "project_name": "mcas",
-                   "visualizations": [{"chart_type": "bars", "metrics": ["a"], "title": "A"}]}
+                   "visualizations": [{"chart_type": "bars", "metrics": ["a"], "title": "A"}], "again": False}
 
 
 def test_the_lock_key_is_a_signed_64_bit_number_of_the_project():
@@ -538,7 +542,7 @@ def test_a_deleted_tile_is_not_made_again(tiles, charts):
     sync(tiles, s)
     del s.dashboards[charts.plugin_slug(PID, PLUGIN)]
     s.imports.clear()
-    assert sync(tiles, s) == {"slug": None, "charts": 0}
+    assert sync(tiles, s) == {"slug": None, "charts": 0, "deleted": True}
     assert s.imports == [] and charts.plugin_slug(PID, PLUGIN) not in s.dashboards
 
 

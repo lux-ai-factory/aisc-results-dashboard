@@ -222,6 +222,8 @@ with app.app_context():
         newest = db.session.query(AiscReportPlot).order_by(AiscReportPlot.id.desc()).first()
         seen[name]["stored_rows"] = newest.rows if newest is not None and plots() > before else "nothing stored"
 
+    call("export.may.viewer", "get", f"/api/v1/aisc_report_export/?dashboard={charts_slug}", as_viewer, who=viewer)
+    call("export.may.editor", "get", f"/api/v1/aisc_report_export/?dashboard={charts_slug}")
     save("export.viewer", "Pass rate by model", as_viewer, viewer)
     save("export.not_on_the_dashboard", "A plot made up")
     save("export.other_hint", "Pass rate by model", hint=f"aisc-{hex_b}-p")
@@ -421,6 +423,13 @@ def test_an_import_into_another_projects_tile_or_a_planted_dashboard_is_403(seen
 def test_a_viewer_may_not_save_a_plot_to_the_report(seen):
     assert seen["export.viewer"]["status"] == 403
     assert seen["export.viewer"]["rows"] == 0 and seen["export.viewer"]["events"] == []
+
+
+def test_a_viewer_is_told_before_saving_that_they_may_not_and_an_editor_that_they_may(seen):
+    for name, may in (("export.may.viewer", False), ("export.may.editor", True)):
+        assert seen[name]["status"] == 200, seen[name]["text"][:500]
+        assert json.loads(seen[name]["text"])["result"] == {"may_export": may}, name
+        assert seen[name]["events"] == [], name
 
 
 def test_a_plot_of_a_dashboard_of_no_project_is_not_saved_even_by_an_admin(seen):

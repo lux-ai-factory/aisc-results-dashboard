@@ -28,10 +28,11 @@ def _plugin_tiles():
     from superset.models.dashboard import Dashboard
 
     from aisc_ext import security
-    from aisc_ext.projects import BRIDGE_USER
+    from aisc_ext.projects import BRIDGE_USER, SupersetStore
 
     bridge = security_manager.find_user(username=BRIDGE_USER)
-    return security.plugin_tiles(db.session.query(Dashboard), bridge_user_id=getattr(bridge, "id", None))
+    return security.plugin_tiles(db.session.query(Dashboard), bridge_user_id=getattr(bridge, "id", None),
+                                 bindings=SupersetStore().tile_bindings())
 
 
 class AiscChartImportView(BaseView):

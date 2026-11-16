@@ -150,6 +150,52 @@ def apply_sign_in(sm, user, realm_roles, memberships, *, sync_ownership=None) ->
                                             getattr(user, "username", "?"), exc_info=True)
 
 
+#: How long a session's project memberships are trusted before a request reads them again, in seconds. A person
+#: removed from a project, or made a viewer, loses those rights in the dashboards within this time, without
+#: signing out.
+MEMBERSHIPS_READ_EVERY_S = 60
+
+# What a sign-in leaves in Superset's session for the request hook (follow_memberships).
+_SUBJECT_KEY = "aisc_subject"
+_REALM_ROLES_KEY = "aisc_realm_roles"
+_READ_AT_KEY = "aisc_memberships_read_at"
+
+
+def remember_sign_in(session, subject, realm_roles, now: float) -> None:
+    """Keep who signed in (the Keycloak subject core.project_member records) and their realm roles in the session,
+    and when their memberships were read, so a later request can read them again (follow_memberships)."""
+    session[_SUBJECT_KEY] = subject
+    session[_REALM_ROLES_KEY] = list(realm_roles or [])
+    session[_READ_AT_KEY] = now
+
+
+def follow_memberships(sm, user, session, now: float, read, *, sync_ownership=None) -> bool:
+    """The roles of a signed-in person, set again from their memberships as they are now: at most once in
+    MEMBERSHIPS_READ_EVERY_S, and only when the roles they give differ from the ones held (then as a sign-in
+    does, apply_sign_in, ownership of the plugin dashboards included). `read(subject)` gives the memberships, or
+    None when they cannot be read, which keeps the roles. A session that remembers no subject (a local account)
+    is left alone. True when the roles changed."""
+    subject = session.get(_SUBJECT_KEY)
+    if not subject:
+        return False
+    read_at = session.get(_READ_AT_KEY)
+    if isinstance(read_at, (int, float)) and not isinstance(read_at, bool) and now - read_at < MEMBERSHIPS_READ_EVERY_S:
+        return False
+    session[_READ_AT_KEY] = now
+    memberships = read(subject)
+    if memberships is None:
+        return False
+    from aisc_ext.reviews.service import STAKEHOLDER_GROUPS
+
+    realm_roles = session.get(_REALM_ROLES_KEY) or []
+    wanted = {role for role in (sm.find_role(r) for r in roles_for_login(realm_roles, memberships)) if role}
+    held = {role for role in user.roles if getattr(role, "name", None) not in STAKEHOLDER_GROUPS}
+    if wanted == held:
+        return False
+    apply_sign_in(sm, user, realm_roles, memberships, sync_ownership=sync_ownership)
+    return True
+
+
 def ownership_changes(memberships, dashboards) -> tuple[list[str], list[str]]:
     """Which plugin dashboards to make the person an owner of, and which to remove them from.
 
@@ -162,14 +208,16 @@ def ownership_changes(memberships, dashboards) -> tuple[list[str], list[str]]:
     return add, remove
 
 
-def plugin_tiles(dashboards, *, bridge_user_id) -> list[tuple[object, str]]:
+def plugin_tiles(dashboards, *, bridge_user_id, bindings=None) -> list[tuple[object, str]]:
     """The plugin tiles among `dashboards`, with their project: [(dashboard, pid)].
 
     A dashboard's metadata, slug and roles are all written by its owners (Superset's import keeps free
     metadata and makes the importer an owner; an owner may set roles), so none of them alone says which
     project a dashboard is. A tile is a dashboard the bridge made
-    (created_by_fk is BRIDGE_USER's id, which nobody else can set) whose metadata names a plugin and a
-    project, and which carries that project's role (the bridge sets it, aisc_ext/plugin_tiles.py)."""
+    (created_by_fk is BRIDGE_USER's id, which nobody else can set) that the bridge's own record names with a
+    plugin and a project (`bindings`: dashboard uuid -> (pid, plugin), store.tile_bindings), and which carries
+    that project's role (the bridge sets it, aisc_ext/plugin_tiles.py). A tile made before that record existed
+    is named by its metadata until its next sync records it."""
     import json
 
     from aisc_ext.projects import project_role_name
@@ -180,8 +228,10 @@ def plugin_tiles(dashboards, *, bridge_user_id) -> list[tuple[object, str]]:
     for d in dashboards:
         if getattr(d, "created_by_fk", None) != bridge_user_id:
             continue
+        bound = (bindings or {}).get(str(getattr(d, "uuid", "") or ""))
         try:
-            meta = json.loads(d.json_metadata or "{}")
+            meta = ({"aisc_project": bound[0], "aisc_plugin": bound[1]} if bound
+                    else json.loads(d.json_metadata or "{}"))
         except (TypeError, ValueError):
             continue
         if not isinstance(meta, dict) or not meta.get("aisc_plugin") or not meta.get("aisc_project"):

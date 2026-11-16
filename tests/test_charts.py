@@ -363,7 +363,8 @@ def test_the_version_run_target_and_local_filters(charts):
     assert run["defaultDataMask"]["extraFormData"]["filters"] == [
         {"col": "run", "op": "IN", "val": [LATEST, LATEST_OF_V1]}]
     assert target["targets"][0]["column"]["name"] == "target_label"
-    assert dash["metadata"]["aisc_plugin"] == "data-monitor::DataDriftPlugin" and dash["metadata"]["aisc_project"] == PID
+    # which project and plugin the tile is, the bridge records apart: Superset refuses keys of its own here
+    assert not any(k.startswith("aisc_") for k in dash["metadata"])
 
 
 def test_the_starter_chart_bundle(charts):
