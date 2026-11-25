@@ -154,6 +154,7 @@ with app.app_context():
     from superset.models.slice import Slice
 
     import aisc_ext.assistant.api as assistant_api
+    from aisc_ext.charts import plots_on
     from aisc_ext.report_exports.model import AiscReportPlot
 
     def chart(name):
@@ -259,12 +260,62 @@ with app.app_context():
     answers["messages"] = {"change": {"chart": bars.id, "changes": {"title": "Pass rate, renamed"}}}
     call("assistant.change.other_hint", "post",
          f"/api/v1/aisc_assistant/conversations/{mine_c}/messages?dashboard=aisc-{hex_b}-p", json={"text": "rename"})
-    call("assistant.change.editor", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/messages{here}",
-         json={"text": "rename it"})
-    answers["messages"] = {"remove": [{"chart": drift.id}]}
-    call("assistant.remove.editor", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/messages{here}",
-         json={"text": "remove it"})
+    asked = call("assistant.change.editor", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/messages{here}",
+                 json={"text": "rename it"})
+    seen["title_after_asking"] = db.session.query(Slice).get(bars.id).slice_name
+    token = (json.loads(asked["text"]).get("confirm") or {}).get("token")
+    call("assistant.confirm.viewer", "post", f"/api/v1/aisc_assistant/conversations/{vic_c}/confirm{here}",
+         as_viewer, who=viewer, json={"token": token})
+    call("assistant.confirm.bad_token", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/confirm{here}",
+         json={"token": "x"})
+    seen["title_after_refusals"] = db.session.query(Slice).get(bars.id).slice_name
+    done = call("assistant.confirm.change", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/confirm{here}",
+                json={"token": token})
     seen["charts_title"] = db.session.query(Slice).get(bars.id).slice_name
+    undo = json.loads(done["text"]).get("undo")
+    call("assistant.undo.change", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/undo{here}",
+         json={"token": undo})
+    seen["title_after_undo"] = db.session.query(Slice).get(bars.id).slice_name
+    call("assistant.undo.change_twice", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/undo{here}",
+         json={"token": undo})
+    position_before_removal = json.loads(db.session.query(Dashboard).get(with_charts).position_json)
+    answers["messages"] = {"remove": [{"chart": drift.id}]}
+    asked = call("assistant.remove.editor", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/messages{here}",
+                 json={"text": "remove it"})
+    seen["placed_after_asking"] = [c for c, _ in plots_on(json.loads(db.session.query(Dashboard).get(with_charts).position_json))]
+    token = (json.loads(asked["text"]).get("confirm") or {}).get("token")
+    done = call("assistant.confirm.remove", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/confirm{here}",
+                json={"token": token})
+    seen["placed_after_confirming"] = [c for c, _ in plots_on(json.loads(db.session.query(Dashboard).get(with_charts).position_json))]
+    call("assistant.undo.remove", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/undo{here}",
+         json={"token": json.loads(done["text"]).get("undo")})
+    back = db.session.query(Dashboard).get(with_charts)
+    seen["layout_back_as_before"] = json.loads(back.position_json) == position_before_removal
+    seen["drift_back_in_the_charts"] = drift.id in [c.id for c in back.slices]
+    seen["bars"], seen["drift"] = bars.id, drift.id
+
+    # a chart another dashboard also shows is changed on a copy, on this dashboard only
+    shared = chart("Shared plot")
+    here_position = json.loads(db.session.query(Dashboard).get(with_charts).position_json)
+    here_position["ROW-1"]["children"].append("CHART-3")
+    here_position["CHART-3"] = {"type": "CHART", "id": "CHART-3", "children": [], "parents": row,
+                                "meta": {"chartId": shared.id, "uuid": str(shared.uuid), "width": 4, "height": 50}}
+    this_dashboard = db.session.query(Dashboard).get(with_charts)
+    this_dashboard.position_json, this_dashboard.slices = json.dumps(here_position), [*this_dashboard.slices, shared]
+    elsewhere = Dashboard(dashboard_title="elsewhere", slug=f"aisc-{hex_a}-elsewhere", published=True,
+                          json_metadata="{}", position_json="{}", roles=[role[project_role_name(A)]], slices=[shared])
+    db.session.add(elsewhere)
+    db.session.commit()
+    answers["messages"] = {"change": {"chart": shared.id, "changes": {"title": "Shared, renamed here"}}}
+    asked = call("assistant.change.shared", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/messages?dashboard={charts_slug}",
+                 json={"text": "rename it"})
+    call("assistant.confirm.shared", "post", f"/api/v1/aisc_assistant/conversations/{mine_c}/confirm?dashboard={charts_slug}",
+         json={"token": (json.loads(asked["text"]).get("confirm") or {}).get("token")})
+    placed = json.loads(db.session.query(Dashboard).get(with_charts).position_json)
+    seen["shared"] = {"original_title": db.session.query(Slice).get(shared.id).slice_name,
+                      "placed_here": placed["CHART-3"]["meta"]["chartId"], "original": shared.id,
+                      "elsewhere": [c.id for c in db.session.query(Dashboard).get(elsewhere.id).slices]}
+    seen["shared"]["copy_title"] = db.session.query(Slice).get(seen["shared"]["placed_here"]).slice_name
 
     # validate: the chart, its place on the dashboard and its ledger event commit together, or not at all
     import hashlib
@@ -279,7 +330,7 @@ with app.app_context():
     db.session.commit()
     source = {"database_name": "project-a", "database_uuid": str(project_db.uuid), "sqlalchemy_uri": "sqlite://"}
     assistant_api._database = lambda pid: (source, project_db)
-    assistant_api._rows = lambda database, sql: (["c", "v"], [])
+    assistant_api._rows = lambda database, sql: (["c", "v"], [("x", 2), ("y", 5)] if "LIMIT 51" in sql else [])
 
     def proposal(title):
         sql = f"SELECT 1 AS c, 2 AS v -- {title}"
@@ -482,12 +533,37 @@ def test_a_validated_proposal_of_another_project_is_refused(seen):
     assert seen["assistant.validate.other_project"]["events"] == []
 
 
-def test_an_editors_change_and_removal_through_the_assistant_reach_the_projects_ledger(seen):
-    for name, action in (("assistant.change.editor", "dashboard.assistant.changed"),
-                         ("assistant.remove.editor", "dashboard.assistant.removed")):
+def test_the_assistant_asks_before_it_changes_a_plot_and_changes_nothing_meanwhile(seen):
+    asked = seen["assistant.change.editor"]
+    assert asked["status"] == 200, asked["text"][:500]
+    confirm = json.loads(asked["text"])["confirm"]
+    assert confirm["text"] == 'Change "Pass rate by model": title to "Pass rate, renamed"?' and confirm["token"]
+    assert asked["events"] == [] and seen["title_after_asking"] == "Pass rate by model"
+
+
+def test_the_assistant_asks_before_it_removes_a_plot_and_removes_nothing_meanwhile(seen):
+    asked = seen["assistant.remove.editor"]
+    assert asked["status"] == 200, asked["text"][:500]
+    assert json.loads(asked["text"])["confirm"]["text"] == (
+        'Remove "Drift by feature" from this dashboard? The charts stay in Superset.')
+    assert asked["events"] == [] and seen["drift"] in seen["placed_after_asking"]
+
+
+def test_another_persons_token_or_a_token_that_is_not_ours_changes_nothing(seen):
+    assert seen["assistant.confirm.viewer"]["status"] == 403, seen["assistant.confirm.viewer"]["text"][:500]
+    assert seen["assistant.confirm.bad_token"]["status"] == 409
+    assert "This took too long; ask again." in seen["assistant.confirm.bad_token"]["text"]
+    assert seen["title_after_refusals"] == "Pass rate by model"
+    assert seen["assistant.confirm.viewer"]["events"] == seen["assistant.confirm.bad_token"]["events"] == []
+
+
+def test_a_confirmed_change_and_removal_are_made_and_reach_the_projects_ledger(seen):
+    for name, action in (("assistant.confirm.change", "dashboard.assistant.changed"),
+                         ("assistant.confirm.remove", "dashboard.assistant.removed")):
         assert seen[name]["status"] == 200, seen[name]["text"][:500]
         assert [(e["pid"], e["action"]) for e in seen[name]["events"]] == [(seen["A"], action)], name
     assert seen["charts_title"] == "Pass rate, renamed"
+    assert seen["drift"] not in seen["placed_after_confirming"] and seen["bars"] in seen["placed_after_confirming"]
 
 
 
@@ -498,6 +574,9 @@ def test_a_validated_chart_its_place_and_its_event_commit_together(seen):
     assert made["status"] == 201, made["text"][:3000]
     assert made["stored"]["chart"] and made["stored"]["dataset"] and made["stored"]["placed"], made["stored"]
     assert [(e["pid"], e["action"]) for e in made["events"]] == [(seen["A"], "dashboard.assistant.validated")]
+    answer = json.loads(made["text"])
+    assert answer["result"] == {"columns": ["c", "v"], "rows": [["x", 2], ["y", 5]], "more": False}
+    assert answer["sentence"] == "Highest: y (5). Lowest: x (2)."
 
 
 def test_a_validate_that_fails_after_the_import_leaves_no_chart_dataset_or_event(seen):
@@ -505,3 +584,31 @@ def test_a_validate_that_fails_after_the_import_leaves_no_chart_dataset_or_event
     assert failed["status"] == 500, failed["text"][:3000]
     assert failed["stored"] == {"chart": None, "dataset": False, "placed": False}
     assert failed["events"] == []
+
+
+def test_a_confirmed_change_can_be_undone_once(seen):
+    undone = seen["assistant.undo.change"]
+    assert undone["status"] == 200, undone["text"][:500]
+    assert json.loads(undone["text"]) == {"undone": "change"}
+    assert [(e["pid"], e["action"]) for e in undone["events"]] == [(seen["A"], "dashboard.assistant.undone")]
+    assert seen["title_after_undo"] == "Pass rate by model"
+    twice = seen["assistant.undo.change_twice"]
+    assert twice["status"] == 409 and "The plot changed since; nothing was undone." in twice["text"]
+    assert twice["events"] == []
+
+
+def test_a_confirmed_removal_can_be_undone_and_the_plot_is_back_in_its_place(seen):
+    undone = seen["assistant.undo.remove"]
+    assert undone["status"] == 200, undone["text"][:500]
+    assert json.loads(undone["text"]) == {"undone": "removal"}
+    assert [(e["pid"], e["action"]) for e in undone["events"]] == [(seen["A"], "dashboard.assistant.undone")]
+    assert seen["layout_back_as_before"] and seen["drift_back_in_the_charts"]
+
+
+def test_a_chart_another_dashboard_shows_is_changed_on_a_copy_here_only(seen):
+    done, s = seen["assistant.confirm.shared"], seen["shared"]
+    assert done["status"] == 200, done["text"][:500]
+    assert s["original_title"] == "Shared plot" and s["elsewhere"] == [s["original"]]
+    assert s["placed_here"] != s["original"] and s["copy_title"] == "Shared, renamed here"
+    (event,) = done["events"]
+    assert event["action"] == "dashboard.assistant.changed"

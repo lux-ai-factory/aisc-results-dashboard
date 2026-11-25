@@ -461,7 +461,7 @@ def test_a_plugin_radar_reads_its_dimension_and_the_score_as_quoted_column_names
 
 # ── the chart assistant's plots in a dashboard's layout ──
 
-from aisc_ext.charts import place_chart, plots_on, without_chart  # noqa: E402
+from aisc_ext.charts import layout_digest, place_chart, plots_on, swap_chart, without_chart  # noqa: E402
 
 
 def made_chart_ids(position):
@@ -573,3 +573,44 @@ def test_a_new_query_can_take_the_place_of_a_plot_the_assistant_did_not_make():
     assert plots_on(out) == [(140, True)]
     assert out["ROW-d"]["children"] == ["CHART-aisc-assistant-n-1"]
 
+
+
+def test_a_layouts_digest_does_not_depend_on_key_order_and_changes_with_the_layout():
+    a = {"ROOT_ID": {"children": ["GRID_ID"]}, "GRID_ID": {"type": "GRID", "children": []}}
+    b = {"GRID_ID": {"children": [], "type": "GRID"}, "ROOT_ID": {"children": ["GRID_ID"]}}
+    assert layout_digest(a) == layout_digest(b)
+    assert layout_digest(a) != layout_digest({**a, "X": {}})
+
+
+def test_a_chart_swapped_for_its_copy_keeps_its_place_and_size():
+    position = {"ROW-1": {"type": "ROW", "children": ["CHART-a"]},
+                "CHART-a": {"type": "CHART", "parents": ["ROW-1"], "children": [],
+                            "meta": {"chartId": 7, "uuid": "u7", "width": 4, "height": 50, "sliceName": "Old"}}}
+    out = swap_chart(position, old=7, new=12, new_uuid="u12", name="Old (this dashboard)")
+    assert out["CHART-a"]["meta"] == {"chartId": 12, "uuid": "u12", "width": 4, "height": 50,
+                                      "sliceName": "Old (this dashboard)"}
+    assert out["ROW-1"] == position["ROW-1"] and position["CHART-a"]["meta"]["chartId"] == 7   # the input stays
+
+
+def test_a_new_chart_goes_in_a_row_right_after_its_neighbours_with_the_same_size():
+    position = {"ROOT_ID": {"type": "ROOT", "children": ["GRID_ID"]},
+                "GRID_ID": {"type": "GRID", "children": ["ROW-1", "ROW-2"], "parents": ["ROOT_ID"]},
+                "ROW-1": {"type": "ROW", "children": ["CHART-a"], "parents": ["ROOT_ID", "GRID_ID"]},
+                "CHART-a": {"type": "CHART", "children": [], "parents": ["ROOT_ID", "GRID_ID", "ROW-1"],
+                            "meta": {"chartId": 7, "uuid": "u7", "width": 6, "height": 50, "sliceName": "A"}},
+                "ROW-2": {"type": "ROW", "children": [], "parents": ["ROOT_ID", "GRID_ID"]}}
+    out = place_chart(position, chart_id=12, chart_uuid="abcdefgh-0000", name="New", near=7)
+    rows = out["GRID_ID"]["children"]
+    new_row = rows[rows.index("ROW-1") + 1]
+    assert new_row not in ("ROW-1", "ROW-2") and rows[-1] == "ROW-2"
+    node = out[out[new_row]["children"][0]]
+    assert node["meta"]["chartId"] == 12 and node["meta"]["width"] == 6 and node["meta"]["height"] == 50
+    assert node["parents"] == ["ROOT_ID", "GRID_ID", new_row]
+    assert "HEADER-aisc-assistant" not in out
+    assert (12, True) in plots_on(out)                        # still a chart the assistant made
+
+
+def test_without_its_neighbour_a_new_chart_goes_under_assistant_charts_as_before():
+    position = {"ROOT_ID": {"type": "ROOT", "children": ["GRID_ID"]},
+                "GRID_ID": {"type": "GRID", "children": [], "parents": ["ROOT_ID"]}}
+    assert "HEADER-aisc-assistant" in place_chart(position, chart_id=12, chart_uuid="abcdefgh-0000", name="New", near=7)

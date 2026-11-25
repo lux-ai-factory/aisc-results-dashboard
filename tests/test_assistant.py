@@ -4,7 +4,8 @@ import hashlib
 
 import pytest
 
-from aisc_ext.assistant.service import (MAX_LABELS, chart_params, description_from, distinct_sql,
+from aisc_ext.assistant.service import (MAX_LABELS, chart_params, confirmation, description_from, distinct_sql,
+                                        read_signed, result_sentence, sign, validated_result,
                                         to_remove, validated_files)
 from aisc_ext.charts import kind_of
 
@@ -123,7 +124,8 @@ def test_the_dashboard_side_imports_only_what_the_dashboard_image_has():
     """A module the image lacks makes Superset skip every AISC extension at start (comments, reviews, exports)."""
     import ast
     from pathlib import Path
-    allowed = {"json", "os", "urllib", "flask", "flask_appbuilder", "aisc_ext", "superset", "hashlib", "re", "uuid", "yaml"}
+    allowed = {"json", "os", "urllib", "flask", "flask_appbuilder", "aisc_ext", "superset", "hashlib", "hmac", "base64",
+               "decimal", "math", "re", "time", "uuid", "yaml"}
     for name in ("api.py", "service.py"):
         tree = ast.parse((Path(__file__).resolve().parents[1] / "aisc_ext" / "assistant" / name).read_text())
         for node in ast.walk(tree):
@@ -190,3 +192,116 @@ def test_the_service_keeps_only_the_assistants_own_rules_and_reexports_no_supers
     from aisc_ext.assistant import service
     for name in ("changed_params", "kind_of", "plot_definition", "place_chart", "plots_on", "without_chart"):
         assert not hasattr(service, name), name
+
+
+def test_a_signed_token_reads_back_as_what_was_signed():
+    token = sign({"kind": "remove", "charts": [7]}, "key", now=1000.0)
+    assert read_signed(token, "key", now=1100.0) == {"kind": "remove", "charts": [7]}
+
+
+def test_a_token_changed_or_signed_with_another_key_reads_as_nothing():
+    token = sign({"kind": "remove", "charts": [7]}, "key", now=1000.0)
+    assert read_signed(token[:-2] + "xx", "key", now=1000.0) is None
+    assert read_signed(token, "other", now=1000.0) is None
+    assert read_signed("not a token", "key", now=1000.0) is None
+
+
+def test_a_token_older_than_fifteen_minutes_reads_as_nothing():
+    token = sign({"kind": "remove"}, "key", now=1000.0)
+    assert read_signed(token, "key", now=1000.0 + 901) is None
+
+
+PLOTS = [{"id": 7, "title": "Jailbreaks by language"}, {"id": 9, "title": "By category"}]
+
+
+def test_a_change_is_confirmed_by_naming_the_plot_and_what_changes():
+    c = confirmation({"change": {"chart": 7, "changes": {"axis_max": 0.4, "kind": "line"}}}, PLOTS)
+    assert c == {"kind": "change", "chart": 7, "changes": {"axis_max": 0.4, "kind": "line"},
+                 "text": 'Change "Jailbreaks by language": axis maximum to 0.4, kind to line?'}
+
+
+def test_a_new_title_and_percentages_are_named_in_plain_words():
+    c = confirmation({"change": {"chart": 9, "changes": {"axis_min": 0, "percent": True, "title": "Categories"}}}, PLOTS)
+    assert c["text"] == 'Change "By category": title to "Categories", percentages on, axis minimum to 0?'
+
+
+def test_a_removal_names_every_plot_and_says_the_charts_stay():
+    c = confirmation({"remove": [{"chart": 7}, {"chart": 9}]}, PLOTS)
+    assert c == {"kind": "remove", "charts": [7, 9],
+                 "text": 'Remove "Jailbreaks by language", "By category" from this dashboard? '
+                         'The charts stay in Superset.'}
+
+
+def test_a_plot_that_is_not_on_the_dashboard_gives_no_confirmation():
+    assert confirmation({"remove": [{"chart": 7}, {"chart": 99}]}, PLOTS) is None
+    assert confirmation({"change": {"chart": 99, "changes": {"title": "x"}}}, PLOTS) is None
+
+
+def test_the_assistant_is_told_only_the_targets_that_have_results():
+    """A target with no result (a chat page, an organisation list) would become a series of invented values in every
+    preview; the query that lists them reaches measurements through the run's target input."""
+    from aisc_ext.assistant.service import TARGETS_SQL
+    sql = " ".join(TARGETS_SQL.split())
+    assert "ti.name = 'target'" in sql and "engine.aisc_backend_measurement" in sql
+
+
+SENTENCE_CHART = {"kind": "bar", "title": "t", "category": "category", "series": "series", "value": "value"}
+SENTENCE_COLS = ["category", "series", "value"]
+
+
+def test_the_sentence_names_the_highest_and_the_lowest_value_with_their_place():
+    rows = [("instructions", "Mistral", 0.872), ("out_of_scope", "Local", 0.0133), ("cv", "OpenAI", 0.207)]
+    assert result_sentence(SENTENCE_CHART, SENTENCE_COLS, rows) == ("Highest: instructions, Mistral (0.872). "
+                                                                    "Lowest: out_of_scope, Local (0.0133).")
+
+
+def test_without_series_only_the_category_is_named():
+    chart = {k: v for k, v in SENTENCE_CHART.items() if k != "series"}
+    assert result_sentence(chart, ["category", "value"], [("a", 3), ("b", 12)]) == "Highest: b (12). Lowest: a (3)."
+
+
+def test_empty_values_are_left_out_and_a_single_value_is_said_once():
+    assert result_sentence(SENTENCE_CHART, SENTENCE_COLS, [("a", "x", None), ("b", "y", 0.5)]) == "One value: b, y (0.5)."
+
+
+def test_no_rows_and_no_values_are_said_plainly():
+    assert result_sentence(SENTENCE_CHART, SENTENCE_COLS, []) == "The query returns no rows on your data."
+    assert result_sentence(SENTENCE_CHART, SENTENCE_COLS, [("a", "x", None)]) == "No value to compare."
+
+
+def test_the_database_decimals_count_as_numbers_and_text_or_true_does_not():
+    from decimal import Decimal
+    rows = [("a", "x", Decimal("0.25")), ("b", "y", "high"), ("c", "z", True), ("d", "w", Decimal("2"))]
+    assert result_sentence(SENTENCE_CHART, SENTENCE_COLS, rows) == "Highest: d, w (2). Lowest: a, x (0.25)."
+
+
+def test_large_numbers_are_written_whole_not_in_exponent_form():
+    rows = [("a", "x", 12345.6), ("b", "y", 40.0)]
+    assert result_sentence(SENTENCE_CHART, SENTENCE_COLS, rows) == "Highest: a, x (12346). Lowest: b, y (40)."
+
+
+def test_after_validation_the_answer_carries_the_first_fifty_rows_and_says_there_are_more():
+    asked = []
+
+    def read(sql):
+        asked.append(sql)
+        return ["category", "value"], [(f"c{i}", i) for i in range(51)]
+    answer = validated_result(read, "SELECT 1", {"category": "category", "value": "value"})
+    assert asked == ["SELECT * FROM (SELECT 1) AS validated LIMIT 51"]
+    assert answer["result"]["columns"] == ["category", "value"] and len(answer["result"]["rows"]) == 50
+    assert answer["result"]["more"] is True and answer["sentence"] == "Highest: c49 (49). Lowest: c0 (0)."
+
+
+def test_the_rows_are_sent_as_json_values():
+    from datetime import date
+    from decimal import Decimal
+    answer = validated_result(lambda sql: (["d", "v"], [(date(2026, 11, 2), Decimal("0.5"))]), "S",
+                              {"category": "d", "value": "v"})
+    assert answer["result"] == {"columns": ["d", "v"], "rows": [["2026-11-02", 0.5]], "more": False}
+
+
+def test_rows_that_cannot_be_read_leave_the_chart_made_and_say_so():
+    def read(sql):
+        raise RuntimeError("timeout")
+    assert validated_result(read, "S", {"category": "c", "value": "v"}) == {
+        "sentence": "The chart was made; its values could not be read here."}

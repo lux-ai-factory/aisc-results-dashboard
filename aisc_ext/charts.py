@@ -15,6 +15,7 @@ and a chartId placeholder next to each chart's uuid in the layout.
 Pure Python: no Superset import, so it is tested without the app."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import uuid
@@ -361,6 +362,21 @@ def synced_node(node_id: str) -> bool:
     return node_id.startswith(SYNC_NODES) and ASSISTANT_MARK not in node_id
 
 
+def layout_digest(value: dict) -> str:
+    """A digest of a layout (or of a chart's settings) that does not depend on the order of its keys: an undo is made
+    only while what it would undo is still exactly as the assistant left it."""
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def swap_chart(position: dict, *, old: int, new: int, new_uuid: str, name: str) -> dict:
+    """The layout with every node of chart `old` showing chart `new` instead, in the same place and size (a copy)."""
+    out = {k: (dict(v) if isinstance(v, dict) else v) for k, v in position.items()}
+    for k, n in out.items():
+        if isinstance(n, dict) and n.get("type") == "CHART" and (n.get("meta") or {}).get("chartId") == old:
+            out[k] = {**n, "meta": {**n["meta"], "chartId": new, "uuid": new_uuid, "sliceName": name}}
+    return out
+
+
 def plots_on(position: dict) -> list[tuple[int, bool]]:
     """Every chart placed on a dashboard, in layout order, and whether the assistant made it."""
     out = []
@@ -403,7 +419,8 @@ def without_chart(position: dict, chart_id: int) -> dict:
     return out
 
 
-def place_chart(position: dict, *, chart_id: int, chart_uuid: str, name: str, replaces: int | None = None) -> dict:
+def place_chart(position: dict, *, chart_id: int, chart_uuid: str, name: str, replaces: int | None = None,
+                near: int | None = None) -> dict:
     """The dashboard's layout with the chart in a row of its own under the "Assistant charts" header (in an "Assistant
     charts" tab on a dashboard with tabs); a chart that replaces a plot of the dashboard, whoever made it, takes its
     place (or goes to the end when that one is no longer there)."""
@@ -422,6 +439,21 @@ def place_chart(position: dict, *, chart_id: int, chart_uuid: str, name: str, re
                      "meta": {**out[old].get("meta", {}), **meta}}
         out[row] = {**out[row], "children": [node if c == old else c for c in out[row]["children"]]}
         del out[old]
+        return out
+    beside = _node_of(out, near) if near is not None and old is None else None
+    if beside is not None:
+        # beside the plot the person asked about: a row of its own right after that plot's row, at its size
+        row_of = out[beside]["parents"][-1]
+        area_parents = list(out[row_of]["parents"])
+        area = area_parents[-1]
+        row = f"ROW{ASSISTANT_MARK}-{chart_uuid[:8]}"
+        size = {k: out[beside].get("meta", {})[k] for k in ("width", "height") if k in out[beside].get("meta", {})}
+        out[row] = {"type": "ROW", "id": row, "children": [node], "parents": area_parents,
+                    "meta": {"background": "BACKGROUND_TRANSPARENT"}}
+        out[node] = {"type": "CHART", "id": node, "children": [], "parents": area_parents + [row], "meta": {**meta, **size}}
+        children = [c for c in out[area]["children"] if c != row]
+        out[area] = {**out[area], "children": children[:children.index(row_of) + 1] + [row]
+                     + children[children.index(row_of) + 1:]}
         return out
     if grid is not None:
         # a dashboard without tabs: a header, then one row per chart

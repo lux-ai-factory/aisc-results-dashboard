@@ -1,8 +1,9 @@
 /* The chart assistant panel on a Superset dashboard. The person asks for a chart in words; the assistant answers with
    a proposal computed on MOCK DATA (invented rows with the project's structure), what it computes and its query. A
-   change is asked the same way. Validate makes the chart from exactly that query on the project's real data (a change
-   to a plot it made replaces that plot in place); a plot it made is removed at once when the person clearly asks. The
-   model's words are always shown as text. */
+   change is asked the same way. Validate makes the chart from exactly that query on the project's real data. A change
+   or a removal of a plot is only asked: the panel shows what would be done, and Confirm makes it; Undo puts it back
+   while nothing else changed. Before each reload the panel keeps the selected tabs and the scroll position, and
+   comes back to them. The model's words are always shown as text. */
 (function () {
   /* the dashboard open now (its id or slug), told by dashboard-pages.js at load and at every in-app navigation */
   var dashboard = null;
@@ -24,6 +25,30 @@
       var kept = JSON.parse(sessionStorage.getItem(STORE_KEY) || 'null');
       if (kept) { conversation = kept.conversation; shown = kept.shown || []; }
     } catch (e) {}
+  }
+
+  /* Where the person is on the dashboard, kept before a reload and given back after it: the selected tabs, by their
+     text, and the scroll position. */
+  function placeKey() { return STORE_KEY ? STORE_KEY + '@place' : null; }
+  function selectedTabs() {
+    return Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'))
+      .filter(function (t) { return t.getAttribute('aria-selected') === 'true'; })
+      .map(function (t) { return t.textContent; });
+  }
+  function reloadHere() {
+    try { sessionStorage.setItem(placeKey(), JSON.stringify({ tabs: selectedTabs(), y: window.scrollY || 0 })); } catch (e) {}
+    setTimeout(function () { location.reload(); }, 800);
+  }
+  function backToPlace() {
+    var place = null;
+    try { place = JSON.parse(sessionStorage.getItem(placeKey()) || 'null'); sessionStorage.setItem(placeKey(), 'null'); } catch (e) {}
+    if (!place) return;
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
+    (place.tabs || []).forEach(function (text) {
+      var tab = tabs.filter(function (t) { return t.textContent === text; })[0];
+      if (tab && tab.getAttribute('aria-selected') !== 'true') tab.click();
+    });
+    if (place.y) window.scrollTo(0, place.y);
   }
 
   function library() {
@@ -161,8 +186,69 @@
       return p;
     }
 
-    function show(proposal, replay) {
-      if (!replay) { shown.push({ proposal: proposal }); save(); }
+    /* A message about an act that was made, with its Undo button while the token is kept. */
+    function made(item, replay) {
+      if (!replay) { shown.push(item); save(); }
+      var p = say('Assistant', item.text, 'color:#555', true);
+      if (!item.undo) return p;
+      var undo = el('button', 'Undo', 'margin-left:8px');
+      undo.onclick = function () {
+        undo.disabled = true;
+        post('/' + conversation + '/undo', { token: item.undo }).then(function () {
+          item.undo = null; save(); undo.remove();
+          say('Assistant', 'Undone. Reloading…', 'color:#555');
+          reloadHere();
+        }).catch(function (e) {
+          item.undo = null; save(); undo.remove();
+          say('Assistant', 'Not undone: ' + e.message, 'color:#a00');
+        });
+      };
+      p.append(undo);
+      return p;
+    }
+
+    /* What the assistant would change or remove, made only when the person confirms it. */
+    function askToConfirm(confirm) {
+      var card = el('div', null, 'border:1px solid #ccc;border-radius:4px;padding:10px;margin:8px 0');
+      card.append(el('p', confirm.text, 'margin:0 0 8px'));
+      var yes = el('button', 'Confirm'), no = el('button', 'Cancel', 'margin-left:8px');
+      no.onclick = function () { card.remove(); say('Assistant', 'Nothing was changed.', 'color:#555'); };
+      yes.onclick = function () {
+        yes.disabled = no.disabled = true;
+        post('/' + conversation + '/confirm', { token: confirm.token }).then(function (d) {
+          card.remove();
+          var text = d.changed ? 'Changed "' + d.changed.title + '". Reloading…'
+            : 'Removed ' + [].concat(d.removed || []).map(function (r) { return '"' + r.title + '"'; }).join(', ')
+              + ' from the dashboard. Reloading…';
+          made({ who: 'Assistant', text: text, undo: d.undo || null });
+          reloadHere();
+        }).catch(function (e) { card.remove(); say('Assistant', 'Not done: ' + e.message, 'color:#a00'); });
+      };
+      card.append(yes, no);
+      log.append(card); log.scrollTop = log.scrollHeight;
+    }
+
+    /* The validated chart's real result, as the dashboard read it: a sentence written by code from the rows and the
+       first rows. It never reaches the assistant; it is the person's data, so it carries no MOCK DATA mark. */
+    function onYourData(card, real) {
+      var block = el('div', null, 'border-top:1px solid #ccc;margin-top:8px;padding-top:6px');
+      block.append(el('h5', 'On your data', 'margin:4px 0'), el('p', real.sentence || '', 'margin:4px 0'));
+      var result = real.result;
+      if (result && result.rows && result.rows.length) {
+        var table = el('table', null, 'border-collapse:collapse;font-size:12px');
+        [result.columns].concat(result.rows.slice(0, 50)).forEach(function (r, i) {
+          var tr = el('tr');
+          r.forEach(function (v) { tr.append(el(i ? 'td' : 'th', v == null ? '' : String(v), 'border:1px solid #ccc;padding:2px 6px')); });
+          table.append(tr);
+        });
+        block.append(table);
+        if (result.more) block.append(el('p', 'and more', 'margin:4px 0;color:#555'));
+      }
+      card.append(block);
+    }
+
+    function show(proposal, replay, item) {
+      if (!replay) { item = { proposal: proposal }; shown.push(item); save(); }
       var card = el('div', null, 'border:1px solid #ccc;border-radius:4px;padding:10px;margin:8px 0');
       card.append(el('div', 'MOCK DATA: not your results', 'display:inline-block;background:#fff3cd;color:#664d03;padding:2px 8px;border-radius:3px;font-weight:600'));
       card.append(el('h4', proposal.chart.title, 'margin:8px 0 4px'));
@@ -175,20 +261,29 @@
       var said = el('span', null, 'margin-left:10px');
       validate.onclick = function () {
         validate.disabled = true; said.textContent = 'Making the chart…';
-        post('/' + conversation + '/validate', { fingerprint: proposal.fingerprint, proposal: proposal.id }).then(function () {
+        post('/' + conversation + '/validate', { fingerprint: proposal.fingerprint, proposal: proposal.id }).then(function (d) {
           said.textContent = proposal.replaces ? 'Replaced on the real data. Reloading…'
-            : 'Made on the real data, under "Assistant charts". Reloading…';
-          setTimeout(function () { location.reload(); }, 800);
+            : 'Made on the real data. Reloading…';
+          item.real = { sentence: d.sentence, result: d.result || null }; save();
+          onYourData(card, item.real);
+          reloadHere();
         }).catch(function (e) { said.textContent = 'Not made: ' + e.message; validate.disabled = false; });
       };
       card.append(validate, said);
+      if (item && item.real) {                               // validated before the reload: made once, not twice
+        validate.remove();
+        said.textContent = proposal.replaces ? 'Replaced on the real data.' : 'Made on the real data.';
+        onYourData(card, item.real);
+      }
       log.append(card);
       library().then(function (lib) { draw(lib, plot, proposal); log.scrollTop = log.scrollHeight; })
         .catch(function (e) { plot.append(el('p', 'The preview could not be drawn: ' + e.message)); });
     }
 
     shown.forEach(function (item) {
-      if (item.proposal) show(item.proposal, true); else say(item.who, item.text, '', true);
+      if (item.proposal) show(item.proposal, true, item);
+      else if ('undo' in item) made(item, true);
+      else say(item.who, item.text, '', true);
     });
 
     form.onsubmit = function (ev) {
@@ -211,14 +306,8 @@
         })
         .then(function (d) {
           waiting.remove();
-          if (d.changed) {
-            say('Assistant', 'Changed "' + d.changed.title + '". Reloading…', 'color:#555');
-            setTimeout(function () { location.reload(); }, 800);
-          } else if (d.removed) {
-            var names = [].concat(d.removed).map(function (r) { return '"' + r.title + '"'; }).join(', ');
-            say('Assistant', 'Removed ' + names + ' from the dashboard. Reloading…', 'color:#555');
-            setTimeout(function () { location.reload(); }, 800);
-          } else if (d.proposal) show(d.proposal); else say('Assistant', d.question || '');
+          if (d.confirm) askToConfirm(d.confirm);
+          else if (d.proposal) show(d.proposal); else say('Assistant', d.question || '');
         })
         .catch(function (e) { waiting.remove(); say('Assistant', 'Could not answer: ' + e.message, 'color:#a00'); })
         .finally(function () { send.disabled = false; });
@@ -247,6 +336,7 @@
     if (!open) return;
     restore();
     add();
+    backToPlace();
   }
   function start() { window.aiscDashboardPages.watch(follow); }
   if (document.body) start(); else document.addEventListener('DOMContentLoaded', start);

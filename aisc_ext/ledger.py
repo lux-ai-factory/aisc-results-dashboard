@@ -101,7 +101,7 @@ def request_id(headers, environ=None) -> str | None:
 #: The actions this module builds fields for; `event` refuses any other.
 ACTIONS = ("dashboard.comment.created", "dashboard.comment.deleted", "dashboard.review.requested",
            "dashboard.review.resolved", "dashboard.export.saved", "dashboard.assistant.validated",
-           "dashboard.assistant.removed", "dashboard.assistant.changed",
+           "dashboard.assistant.removed", "dashboard.assistant.changed", "dashboard.assistant.undone",
            "dashboard.dashboard.deleted", "dashboard.chart.deleted", "dashboard.dataset.deleted")
 
 
@@ -151,11 +151,19 @@ def assistant_removed(chart_id, title: str, *, slug: str, request: str | None) -
     return _fields("chart", str(chart_id), request, details={"dashboard": slug}, before={"title": title})
 
 
-def assistant_changed(chart_id, *, slug: str, request: str | None, changes: dict, before: dict, after: dict) -> dict:
+def assistant_undone(chart_id, *, slug: str, request: str | None, undone: str, before: dict, after: dict) -> dict:
+    """A change or a removal made with the chart assistant, undone by the person: what was undone, and the chart's
+    settings (or the dashboard's layout) before and after the undo."""
+    return _fields("chart", str(chart_id), request, details={"dashboard": slug, "undone": undone}, before=before,
+                   after=after)
+
+
+def assistant_changed(chart_id, *, slug: str, request: str | None, changes: dict, before: dict, after: dict,
+                      copy_of=None) -> dict:
     """A chart changed in place with the chart assistant (scale, kind, title): what was asked, and its settings before
     and after."""
-    return _fields("chart", str(chart_id), request, details={"dashboard": slug}, content=changes, before=before,
-                   after=after)
+    details = {"dashboard": slug, **({"copy_of": str(copy_of)} if copy_of is not None else {})}
+    return _fields("chart", str(chart_id), request, details=details, content=changes, before=before, after=after)
 
 
 def comment_deleted(row: dict, *, slug: str, request: str | None) -> dict:

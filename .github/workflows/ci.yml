@@ -14,6 +14,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # the ledger tests import aisc_identity, which lives in the aisc repository (shared/identity), as it does
+      # beside aisc_ext in the stack
+      - uses: actions/checkout@v4
+        with:
+          repository: lux-ai-factory/aisc
+          ref: pilot
+          path: aisc
+          sparse-checkout: shared/identity
       - uses: astral-sh/setup-uv@v5
       - run: >-
           uv run --no-project --with pytest --with sqlalchemy --with psycopg2-binary
@@ -21,3 +29,4 @@ jobs:
           python -m pytest -q -p no:cacheprovider tests --ignore tests/test_sso_login.py
         env:
           PYTHONPATH: .
+          AISC_IDENTITY_DIR: ${{ github.workspace }}/aisc/shared/identity

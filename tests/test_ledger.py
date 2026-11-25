@@ -452,3 +452,20 @@ def test_a_dashboard_of_no_project_takes_its_own_slug_as_hint():
     assert ledger.hint_problem("sales", "sales") is None
     assert ledger.hint_problem("sales", "other") is not None
     assert ledger.hint_problem("sales", None) is not None
+
+
+def test_an_undo_is_recorded_with_what_it_undid_and_the_settings_before_and_after():
+    from aisc_ext.ledger import ACTIONS, assistant_undone
+    fields = assistant_undone(7, slug="s", request=None, undone="change", before={"title": "b"}, after={"title": "a"})
+    assert fields["item_type"] == "chart" and fields["item_id"] == "7"
+    assert fields["details"] == {"dashboard": "s", "undone": "change"}
+    assert fields["before"] == {"title": "b"} and fields["after"] == {"title": "a"}
+    assert "dashboard.assistant.undone" in ACTIONS
+
+
+def test_a_change_made_on_a_copy_names_the_chart_it_copied():
+    from aisc_ext.ledger import assistant_changed
+    on_copy = assistant_changed(12, slug="s", request=None, changes={"title": "t"}, before={}, after={}, copy_of=7)
+    assert on_copy["details"] == {"dashboard": "s", "copy_of": "7"}
+    in_place = assistant_changed(7, slug="s", request=None, changes={"title": "t"}, before={}, after={})
+    assert in_place["details"] == {"dashboard": "s"}

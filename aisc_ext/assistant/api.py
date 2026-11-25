@@ -7,22 +7,22 @@ the conversation, and on validation makes the chart from exactly the validated q
 connection, with its ledger event. Imported only inside Superset."""
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 
-from flask import g, request, session
+from flask import current_app, g, request, session
 from flask_appbuilder.api import BaseApi, expose, protect, safe
 
 from aisc_ext import access, ledger
-from aisc_ext.assistant.service import (chart_uuid_of, description_from, distinct_sql,
+from aisc_ext.assistant.service import (TARGETS_SQL, chart_uuid_of, confirmation, description_from, distinct_sql, read_signed, sign,
                                         plots_for_model, ranges_from, to_change, to_remove, validated_files,
-                                        with_conversation)
-from aisc_ext.charts import changed_params, place_chart, plots_on, without_chart
+                                        validated_result, with_conversation)
+from aisc_ext.charts import changed_params, layout_digest, place_chart, plots_on, swap_chart, without_chart
 from aisc_ext.comments.api import _send_queued
 from aisc_ext.dashboards import open_dashboard
 
 SESSION_KEY = "aisc_assistant"
-TARGETS_SQL = "SELECT DISTINCT label FROM target.target WHERE label IS NOT NULL ORDER BY 1"
 METRICS_SQL = """
 SELECT met.name, k.key, (array_agg(DISTINCT m.dimensions->>k.key))[1:51], count(DISTINCT m.dimensions->>k.key),
        bool_and(jsonb_typeof(m.dimensions->k.key) = 'number'), avg(length(m.dimensions->>k.key))
@@ -147,6 +147,22 @@ def _change(dashboard, chart_id, changes) -> tuple[dict, dict, str]:
     return before, {"title": chart.slice_name, "viz_type": viz_type, "params": new}, chart.slice_name
 
 
+def _copy_here(dashboard, chart):
+    """A copy of `chart` put on `dashboard` in its place, the original left as it is (other dashboards show it)."""
+    from superset import db
+    from superset.models.slice import Slice
+
+    copy = Slice(slice_name=f"{chart.slice_name} (this dashboard)"[:250], viz_type=chart.viz_type, params=chart.params,
+                 query_context=chart.query_context, datasource_id=chart.datasource_id,
+                 datasource_type=chart.datasource_type, description=chart.description, owners=list(chart.owners))
+    db.session.add(copy)
+    db.session.flush()
+    dashboard.position_json = json.dumps(swap_chart(json.loads(dashboard.position_json or "{}"), old=chart.id,
+                                                    new=copy.id, new_uuid=str(copy.uuid), name=copy.slice_name))
+    dashboard.slices = [copy if c.id == chart.id else c for c in dashboard.slices]
+    return copy
+
+
 def _forget_default(slug, chart_id):
     """Remembers that a chart left a dashboard on purpose, so a plugin tile's sync does not put a default back."""
     from superset import db
@@ -245,16 +261,54 @@ class AssistantApi(BaseApi):
         made = _plots_on(dashboard)
         status, data = _assistant(f"/v1/conversations/{cid}/messages",
                                   {"text": (request.json or {}).get("text", ""), "charts": made})
-        if status == 200 and "change" in data:
-            return self._apply_change(dashboard, pid, made, data["change"], editor=editor,
-                                      action="dashboard.assistant.changed")
-        if status != 200 or "remove" not in data:
+        if status != 200 or ("change" not in data and "remove" not in data):
             return self.response(status, **data)
-        plots = to_remove(data["remove"], made)
+        # the assistant decided to change or remove: nothing is made until the person confirms it
+        act = confirmation(data, made)
+        if act is None:
+            what = "changed" if "change" in data else "removed"
+            return self.response(409, message=f"Only plots on this dashboard can be {what}.")
+        if not editor:
+            what = "change" if act["kind"] == "change" else "remove"
+            return self.response(403, message=f"Only an editor or an admin of the project can {what} a plot.")
+        held = {k: v for k, v in act.items() if k != "text"}
+        token = sign({**held, "cid": cid, "dashboard": dashboard.id, "user": g.user.id}, current_app.secret_key,
+                     now=time.time())
+        return self.response(200, confirm={"text": act["text"], "token": token})
+
+    @expose("/conversations/<cid>/confirm", methods=["POST"])
+    @protect(allow_browser_login=True)
+    @safe
+    def confirm(self, cid):
+        """Make the change or the removal the person was asked to confirm, from the token the panel sends back.
+        ---
+        post:
+          responses:
+            200: {description: changed or removed}
+        """
+        dashboard_id = self._mine(cid)
+        if dashboard_id is None:
+            return self.response_404()
+        dashboard, pid, refused = self._project(dashboard_id, "read")
+        if refused:
+            return refused
+        act = read_signed((request.json or {}).get("token"), current_app.secret_key, now=time.time())
+        if act is None:
+            return self.response(409, message="This took too long; ask again.")
+        if (act.get("cid"), act.get("dashboard"), act.get("user")) != (cid, dashboard.id, g.user.id):
+            return self.response_403()
+        if not access.may(g.user, dashboard, "change_chart"):
+            return self.response_403()
+        from superset import db
+
+        made = _plots_on(dashboard)
+        if act.get("kind") == "change":
+            return self._apply_change(dashboard, pid, made, {"chart": act.get("chart"), "changes": act.get("changes")},
+                                      editor=True, action="dashboard.assistant.changed", undo_for=cid)
+        plots = to_remove([{"chart": c} for c in act.get("charts") or []], made)
         if plots is None:
             return self.response(409, message="Only plots on this dashboard can be removed.")
-        if not editor:
-            return self.response(403, message="Only an editor or an admin of the project can remove a plot.")
+        position = json.loads(dashboard.position_json or "{}")
         for chart_id, title in plots:
             fresh = _take_off(dashboard.id, chart_id)
             ledger.emit(db.session.connection(), pid, "dashboard.assistant.removed",
@@ -262,10 +316,92 @@ class AssistantApi(BaseApi):
                                                  request=ledger.request_id(request.headers, request.environ)))
         db.session.commit()
         _send_queued()
-        return self.response(200, removed=[{"chart": c, "title": t} for c, t in plots])
+        undo = self._undo_token(cid, dashboard.id, {
+            "undo": "removal", "charts": [c for c, _ in plots], "position": position,
+            "after_digest": layout_digest(json.loads(fresh.position_json or "{}"))})
+        return self.response(200, removed=[{"chart": c, "title": t} for c, t in plots], undo=undo)
 
-    def _apply_change(self, dashboard, pid, plots, asked, *, editor, action):
+    def _undo_token(self, cid, dashboard_id, held: dict) -> str:
+        return sign({**held, "cid": cid, "dashboard": dashboard_id, "user": g.user.id}, current_app.secret_key,
+                    now=time.time())
+
+    @expose("/conversations/<cid>/undo", methods=["POST"])
+    @protect(allow_browser_login=True)
+    @safe
+    def undo(self, cid):
+        """Undo a change or a removal the person confirmed, while nothing else has changed what it would undo.
+        ---
+        post:
+          responses:
+            200: {description: undone}
+        """
         from superset import db
+        from superset.models.dashboard import Dashboard
+        from superset.models.slice import Slice
+
+        from aisc_ext.made_tiles import AiscChangedChart, AiscRemovedChart
+
+        dashboard_id = self._mine(cid)
+        if dashboard_id is None:
+            return self.response_404()
+        dashboard, pid, refused = self._project(dashboard_id, "read")
+        if refused:
+            return refused
+        held = read_signed((request.json or {}).get("token"), current_app.secret_key, now=time.time())
+        if held is None:
+            return self.response(409, message="This took too long; ask again.")
+        if (held.get("cid"), held.get("dashboard"), held.get("user")) != (cid, dashboard.id, g.user.id):
+            return self.response_403()
+        if not access.may(g.user, dashboard, "change_chart"):
+            return self.response_403()
+        rid = ledger.request_id(request.headers, request.environ)
+        if held.get("undo") == "change":
+            chart = db.session.query(Slice).get(held.get("chart"))
+            now = {"title": chart.slice_name, "viz_type": chart.viz_type, "params": json.loads(chart.params or "{}")} \
+                if chart is not None else None
+            if now is None or layout_digest(now) != held.get("after_digest"):
+                return self.response(409, message="The plot changed since; nothing was undone.")
+            before = held["before"]
+            chart.slice_name, chart.viz_type, chart.params = before["title"], before["viz_type"], json.dumps(before["params"])
+            row = db.session.query(AiscChangedChart).get((dashboard.slug, str(chart.uuid)))
+            if held.get("remembered") is None:
+                if row is not None:
+                    db.session.delete(row)
+            elif row is not None:
+                row.changes = json.dumps(held["remembered"])
+            else:
+                db.session.add(AiscChangedChart(slug=dashboard.slug, chart_uuid=str(chart.uuid),
+                                                changes=json.dumps(held["remembered"])))
+            ledger.emit(db.session.connection(), pid, "dashboard.assistant.undone",
+                        ledger.assistant_undone(chart.id, slug=dashboard.slug, request=rid, undone="change",
+                                                before=now, after=before))
+            db.session.commit()
+            _send_queued()
+            return self.response(200, undone="change")
+        fresh = db.session.query(Dashboard).get(dashboard.id)
+        if layout_digest(json.loads(fresh.position_json or "{}")) != held.get("after_digest"):
+            return self.response(409, message="The dashboard changed since; nothing was undone.")
+        after = json.loads(fresh.position_json or "{}")
+        fresh.position_json = json.dumps(held["position"])
+        charts = db.session.query(Slice).filter(Slice.id.in_(held.get("charts") or [])).all()
+        fresh.slices = [*fresh.slices, *(c for c in charts if c not in fresh.slices)]
+        for c in charts:
+            row = db.session.query(AiscRemovedChart).get((fresh.slug, str(c.uuid)))
+            if row is not None:
+                db.session.delete(row)
+            ledger.emit(db.session.connection(), pid, "dashboard.assistant.undone",
+                        ledger.assistant_undone(c.id, slug=fresh.slug, request=rid, undone="removal",
+                                                before={"layout": layout_digest(after)},
+                                                after={"layout": layout_digest(held["position"])}))
+        db.session.commit()
+        _send_queued()
+        return self.response(200, undone="removal")
+
+    def _apply_change(self, dashboard, pid, plots, asked, *, editor, action, undo_for=None):
+        from superset import db
+        from superset.models.slice import Slice
+
+        from aisc_ext.made_tiles import AiscChangedChart
 
         found = to_change(asked, plots)
         if found is None:
@@ -273,6 +409,14 @@ class AssistantApi(BaseApi):
         if not editor:
             return self.response(403, message="Only an editor or an admin of the project can change a plot.")
         chart_id, changes = found
+        chart = db.session.query(Slice).get(chart_id)
+        copy_of = None
+        if chart is not None and len(chart.dashboards) > 1:
+            # another dashboard shows this chart too: the change is made on a copy, here only
+            copy_of, chart = chart.id, _copy_here(dashboard, chart)
+            chart_id = chart.id
+        row = db.session.query(AiscChangedChart).get((dashboard.slug, str(chart.uuid))) if chart is not None else None
+        remembered = json.loads(row.changes) if row is not None else None
         try:
             before, after, title = _change(dashboard, chart_id, changes)
         except ValueError as exc:
@@ -280,10 +424,16 @@ class AssistantApi(BaseApi):
             return self.response(409, message=f"That plot cannot be changed that way: {exc}.")
         ledger.emit(db.session.connection(), pid, action,
                     ledger.assistant_changed(chart_id, slug=dashboard.slug, changes=changes, before=before, after=after,
-                                             request=ledger.request_id(request.headers, request.environ)))
+                                             request=ledger.request_id(request.headers, request.environ),
+                                             copy_of=copy_of))
         db.session.commit()
         _send_queued()
-        return self.response(200, changed={"chart": chart_id, "title": title})
+        answer = {"changed": {"chart": chart_id, "title": title}}
+        if undo_for is not None:
+            answer["undo"] = self._undo_token(undo_for, dashboard.id, {
+                "undo": "change", "chart": chart_id, "before": before, "after_digest": layout_digest(after),
+                "remembered": remembered})
+        return self.response(200, **answer)
 
     @expose("/conversations/<cid>/validate", methods=["POST"])
     @protect(allow_browser_login=True)
@@ -339,8 +489,10 @@ class AssistantApi(BaseApi):
             replaces = replaces if replaces in [i for i, _ in plots_on(position)] and replaces != chart.id else None
             if chart not in fresh.slices:
                 fresh.slices.append(chart)
+            near = chosen.get("near")
+            near = near if near in [i for i, _ in plots_on(position)] and near != chart.id else None
             fresh.position_json = json.dumps(place_chart(position, chart_id=chart.id, chart_uuid=uid,
-                                                         name=chart.slice_name, replaces=replaces))
+                                                         name=chart.slice_name, replaces=replaces, near=near))
             if replaces is not None:
                 _forget_default(fresh.slug, replaces)
                 fresh.slices = [c for c in fresh.slices if c.id != replaces]
@@ -353,4 +505,6 @@ class AssistantApi(BaseApi):
             db.session.rollback()
             raise
         _send_queued()
-        return self.response(201, chart=chart.id, fingerprint=chosen["fingerprint"], replaced=replaces)
+        # the real result goes to the person's browser only, never to the assistant (R1)
+        shown = validated_result(lambda sql: _rows(database, sql), chosen["sql"], chosen["chart"])
+        return self.response(201, chart=chart.id, fingerprint=chosen["fingerprint"], replaced=replaces, **shown)

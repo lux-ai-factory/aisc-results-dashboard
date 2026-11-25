@@ -188,7 +188,7 @@ _EXTENSION_GRANTS = {
     "Back": ("menu_access",),
     "ReviewRequestApi": ("can_list", "can_post", "can_patch"),
     "ReportExportApi": ("can_post", "can_get"),
-    "AssistantApi": ("can_start", "can_message", "can_validate"),
+    "AssistantApi": ("can_start", "can_message", "can_confirm", "can_undo", "can_validate"),
 }
 
 

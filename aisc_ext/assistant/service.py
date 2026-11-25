@@ -8,12 +8,29 @@ these travel as they are to the project's chosen model and into its mock databas
 answers never goes to the model (D2). No count of rows. Pure: no Superset import."""
 from __future__ import annotations
 
+import base64
+import decimal
 import hashlib
+import hmac
+import json
+import math
 import re
 import uuid
 
 from aisc_ext import charts
 from aisc_ext.charts import quoted_name
+
+#: the targets that have results: what was tested, as the person names it (a target with none would be a series of
+#: invented values in every preview)
+TARGETS_SQL = """
+SELECT DISTINCT t.label
+  FROM target.target t
+  JOIN engine.aisc_backend_aicomponent tc ON tc.pid = t.engine_component
+  JOIN engine.aisc_backend_evaluationinput ti ON ti.component_id = tc.id AND ti.name = 'target'
+  JOIN engine.aisc_backend_observation o ON o.evaluation_plugin_id = ti.evaluation_plugin_id
+ WHERE t.label IS NOT NULL
+   AND EXISTS (SELECT 1 FROM engine.aisc_backend_measurement m WHERE m.observation_id = o.id)
+ ORDER BY 1"""
 
 MAX_LABELS = 50
 MAX_LABEL_LENGTH = 60
@@ -183,3 +200,117 @@ def to_change(asked, plots: list[dict]) -> tuple[int, dict] | None:
     if asked.get("chart") not in {p["id"] for p in plots}:
         return None
     return asked["chart"], dict(asked["changes"])
+
+
+#: how long a person has to confirm or undo an act of the assistant, in seconds
+TOKEN_MAX_AGE = 900
+
+
+def sign(payload: dict, key: str, *, now: float) -> str:
+    """A token holding `payload`, signed with `key`: the panel keeps it and sends it back to confirm or undo an act,
+    so nothing waits on the server meanwhile."""
+    body = base64.urlsafe_b64encode(json.dumps({"at": now, "payload": payload}, sort_keys=True).encode()).decode()
+    return body + "." + hmac.new(key.encode(), body.encode(), hashlib.sha256).hexdigest()
+
+
+def read_signed(token: str, key: str, *, now: float, max_age: int = TOKEN_MAX_AGE) -> dict | None:
+    """The payload of a token this dashboard signed less than `max_age` seconds ago; None for anything else."""
+    body, _, mac = str(token or "").rpartition(".")
+    if not body or not hmac.compare_digest(mac, hmac.new(key.encode(), body.encode(), hashlib.sha256).hexdigest()):
+        return None
+    try:
+        held = json.loads(base64.urlsafe_b64decode(body.encode()))
+    except ValueError:
+        return None
+    if not isinstance(held, dict) or not isinstance(held.get("at"), (int, float)) or now - held["at"] > max_age:
+        return None
+    return held.get("payload")
+
+
+def _value(value) -> str:
+    return f'"{value}"' if isinstance(value, str) else str(value)
+
+
+#: how each change is said, in the order a confirmation names them
+_SAID = (("title", lambda v: f'title to "{v}"'), ("percent", lambda v: "percentages on" if v else "percentages off"),
+         ("axis_min", lambda v: f"axis minimum to {v}"), ("axis_max", lambda v: f"axis maximum to {v}"),
+         ("kind", lambda v: f"kind to {v}"))
+
+
+def confirmation(answer: dict, plots: list[dict]) -> dict | None:
+    """What a person confirms before the assistant's change or removal is made: the act and a sentence naming it.
+    None when a plot it names is not on the dashboard."""
+    titles = {p["id"]: p["title"] for p in plots}
+    if "change" in answer:
+        found = to_change(answer["change"], plots)
+        if found is None:
+            return None
+        chart, changes = found
+        said = ", ".join(say(changes[k]) for k, say in _SAID if k in changes)
+        return {"kind": "change", "chart": chart, "changes": changes, "text": f'Change "{titles[chart]}": {said}?'}
+    removed = to_remove(answer.get("remove"), plots)
+    if removed is None:
+        return None
+    names = ", ".join(f'"{title}"' for _, title in removed)
+    return {"kind": "remove", "charts": [chart for chart, _ in removed],
+            "text": f"Remove {names} from this dashboard? The charts stay in Superset."}
+
+
+def _said_number(value) -> str:
+    """Whole numbers as they are; others with three significant digits, large ones rounded whole (never 1.23e+04)."""
+    number = float(value)
+    if number.is_integer() or abs(number) >= 1000:
+        return str(round(number))
+    return format(number, ".3g")
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float, decimal.Decimal)) and not isinstance(value, bool) and \
+        math.isfinite(float(value))
+
+
+def result_sentence(chart: dict, columns: list[str], rows: list) -> str:
+    """One sentence about a validated chart's result on the real data, written by code from the rows (the model has no
+    part in it, R2): the highest and the lowest value with the category (and series) they belong to."""
+    if not rows:
+        return "The query returns no rows on your data."
+    at = {name: i for i, name in enumerate(columns)}
+    value = at.get(chart.get("value"))
+    places = [at[chart[key]] for key in ("category", "series") if chart.get(key) in at]
+    found = [(float(row[value]), row) for row in rows if value is not None and _is_number(row[value])]
+    if not found:
+        return "No value to compare."
+
+    def said(entry):
+        number, row = entry
+        return f"{', '.join(str(row[i]) for i in places)} ({_said_number(row[value])})"
+    if len(found) == 1:
+        return f"One value: {said(found[0])}."
+    highest = max(found, key=lambda entry: entry[0])
+    lowest = min(found, key=lambda entry: entry[0])
+    return f"Highest: {said(highest)}. Lowest: {said(lowest)}."
+
+
+#: the rows of a validated chart's result the panel shows
+RESULT_ROWS = 50
+
+
+def _json_value(value):
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, decimal.Decimal):
+        return float(value)
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
+def validated_result(read, sql: str, chart: dict) -> dict:
+    """The real result of a validated chart, for the person's browser only (R1: never sent to the assistant): its first
+    rows and a sentence about them. read(sql) -> (columns, rows) on the project's data. A failure to read them never
+    undoes the chart: the answer then says so and holds no result."""
+    try:
+        columns, rows = read(f"SELECT * FROM ({sql}) AS validated LIMIT {RESULT_ROWS + 1}")
+    except Exception:                                       # noqa: BLE001 - the chart is made; only its values are missing
+        return {"sentence": "The chart was made; its values could not be read here."}
+    shown = [[_json_value(v) for v in row] for row in rows[:RESULT_ROWS]]
+    return {"result": {"columns": list(columns), "rows": shown, "more": len(rows) > RESULT_ROWS},
+            "sentence": result_sentence(chart, list(columns), rows[:RESULT_ROWS])}
