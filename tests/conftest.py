@@ -8,9 +8,12 @@ from pathlib import Path
 import pytest
 
 # aisc_identity (the ledger's shared delivery loop): mounted beside aisc_ext in the stack, read here from the
-# AISC checkout this repository sits in
-_IDENTITY = Path(__file__).resolve().parents[3] / "shared/identity"
-if _IDENTITY.is_dir() and str(_IDENTITY) not in sys.path:
+# AISC checkout this repository sits in, or from AISC_IDENTITY_DIR when the tests run somewhere else (CI mounts
+# this repository alone, at /w, in the dashboard's image: there is no checkout above it)
+_HERE = Path(__file__).resolve()
+_IDENTITY = (Path(os.environ["AISC_IDENTITY_DIR"]) if os.environ.get("AISC_IDENTITY_DIR")
+             else _HERE.parents[3] / "shared/identity" if len(_HERE.parents) > 3 else None)
+if _IDENTITY is not None and _IDENTITY.is_dir() and str(_IDENTITY) not in sys.path:
     sys.path.insert(0, str(_IDENTITY))
 
 
